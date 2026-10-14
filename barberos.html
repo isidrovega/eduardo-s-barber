@@ -566,6 +566,67 @@
 
                 </section>
 
+                <!-- CUENTA DE ACCESO DEL BARBERO -->
+<section
+    class="barber-config-section"
+    id="barberAccountSection"
+>
+    <div class="barber-config-title">
+        <div>
+            <span class="config-eyebrow">
+                Acceso al sistema
+            </span>
+
+            <h3>Cuenta del barbero</h3>
+        </div>
+    </div>
+
+    <p
+        id="barberAccountStatus"
+        style="margin-bottom: 16px; color: #929292;"
+    >
+        Guarda primero al barbero para crear su cuenta.
+    </p>
+
+    <div class="form-grid">
+        <div class="field">
+            <label for="barberAccountEmail">
+                Correo electrónico
+            </label>
+
+            <input
+                type="email"
+                id="barberAccountEmail"
+                placeholder="barbero@ejemplo.com"
+                autocomplete="off"
+            >
+        </div>
+
+        <div class="field">
+            <label for="barberAccountPassword">
+                Contraseña temporal
+            </label>
+
+            <input
+                type="password"
+                id="barberAccountPassword"
+                placeholder="Mínimo 12 caracteres"
+                minlength="12"
+                autocomplete="new-password"
+            >
+        </div>
+    </div>
+
+    <button
+        type="button"
+        class="btn btn-dark"
+        id="createBarberAccountButton"
+        disabled
+    >
+        Crear cuenta de acceso
+    </button>
+</section>
+
                 <!-- =============================================
                      SERVICIOS
                 ============================================= -->

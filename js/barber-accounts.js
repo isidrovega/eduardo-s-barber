@@ -1,81 +1,74 @@
+/* =========================================================
+   EDUARDO'S BARBERSHOP
+   BARBER-ACCOUNTS.JS
+========================================================= */
 
-import { auth, db } from "./firebase.js";
+import {
+    app,
+    auth,
+    db
+} from "./firebase.js";
 
 import {
     initializeApp,
+    getApp,
     getApps,
-    getApp
+    deleteApp
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
 
 import {
     getAuth,
     createUserWithEmailAndPassword,
     signOut,
-    deleteUser
+    inMemoryPersistence,
+    setPersistence
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
 
 import {
     doc,
     getDoc,
-    setDoc
+    setDoc,
+    updateDoc,
+    serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 
-import { ADMIN_UID } from "./auth.js";
+const SECONDARY_APP_NAME = "barber-account-creator";
 
-function requireAdmin() {
-    const user = auth.currentUser;
+function getSecondaryApp() {
+    const existing = getApps().find(
+        item => item.name === SECONDARY_APP_NAME
+    );
 
-    if (
-        !user ||
-        ADMIN_UID === "REEMPLAZAR_CON_UID_ADMIN" ||
-        user.uid !== ADMIN_UID ||
-        !user.emailVerified
-    ) {
-        throw new Error(
-            "Solo el administrador verificado puede crear cuentas."
-        );
+    if (existing) {
+        return existing;
     }
+
+    return initializeApp(
+        app.options,
+        SECONDARY_APP_NAME
+    );
 }
 
-function getSecondaryAuth() {
-    const mainApp = getApp();
-    const name = "barber-account-registration";
+function validateEmail(email) {
+    const normalized = String(email || "")
+        .trim()
+        .toLowerCase();
 
-    const secondaryApp = getApps().find(
-        app => app.name === name
-    ) || initializeApp(mainApp.options, name);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+        throw new Error("Ingresa un correo electrónico válido.");
+    }
 
-    return getAuth(secondaryApp);
+    return normalized;
 }
 
-function validateAccountData({
-    email,
-    password,
-    barberId
-}) {
-    if (!barberId || typeof barberId !== "string") {
+function validatePassword(password) {
+    if (typeof password !== "string" || password.length < 12) {
         throw new Error(
-            "Primero debes guardar el barbero."
+            "La contraseña temporal debe tener al menos 12 caracteres."
         );
     }
 
-    if (
-        !email ||
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-    ) {
-        throw new Error(
-            "Introduce un correo electrónico válido."
-        );
-    }
-
-    if (
-        typeof password !== "string" ||
-        password.length < 8
-    ) {
-        throw new Error(
-            "La contraseña temporal debe tener al menos 8 caracteres."
-        );
-    }
+    return password;
 }
 
 export async function createBarberAccount({
@@ -83,32 +76,43 @@ export async function createBarberAccount({
     email,
     password
 }) {
-    requireAdmin();
+    await auth.authStateReady();
 
-    const normalizedEmail = email.trim().toLowerCase();
+    if (!auth.currentUser) {
+        throw new Error("Debes iniciar sesión como administrador.");
+    }
 
-    validateAccountData({
-        barberId,
-        email: normalizedEmail,
-        password
-    });
+    if (!barberId || typeof barberId !== "string") {
+        throw new Error("Primero debes guardar al barbero.");
+    }
 
-    const barberSnapshot = await getDoc(
-        doc(db, "barbers", barberId)
-    );
+    const normalizedEmail = validateEmail(email);
+    const validatedPassword = validatePassword(password);
+
+    const barberRef = doc(db, "barbers", barberId);
+    const barberSnapshot = await getDoc(barberRef);
 
     if (!barberSnapshot.exists()) {
         throw new Error(
-            "El barbero no existe en Firestore."
+            "El barbero no existe en Firestore. Guárdalo primero."
         );
     }
 
-    const secondaryAuth = getSecondaryAuth();
+    const barber = barberSnapshot.data();
 
-    // Limpia cualquier sesión previa de la instancia secundaria.
-    if (secondaryAuth.currentUser) {
-        await signOut(secondaryAuth);
+    if (barber.authUid) {
+        throw new Error(
+            "Este barbero ya tiene una cuenta de acceso vinculada."
+        );
     }
+
+    const secondaryApp = getSecondaryApp();
+    const secondaryAuth = getAuth(secondaryApp);
+
+    await setPersistence(
+        secondaryAuth,
+        inMemoryPersistence
+    );
 
     let createdUser = null;
 
@@ -116,92 +120,62 @@ export async function createBarberAccount({
         const credential = await createUserWithEmailAndPassword(
             secondaryAuth,
             normalizedEmail,
-            password
+            validatedPassword
         );
 
         createdUser = credential.user;
 
-        // Esta escritura la realiza la sesión administradora
-        // a través de Firestore, no la sesión secundaria.
         await setDoc(
             doc(db, "users", createdUser.uid),
             {
-                role: "barber",
+                uid: createdUser.uid,
+                email: normalizedEmail,
                 barberId,
+                role: "barber",
                 active: true,
                 mustChangePassword: true,
-                email: normalizedEmail,
-                createdAt: new Date().toISOString()
+                createdAt: serverTimestamp()
             }
         );
 
+        await updateDoc(barberRef, {
+            authUid: createdUser.uid,
+            accountEmail: normalizedEmail,
+            accountCreatedAt: serverTimestamp()
+        });
+
         return {
             uid: createdUser.uid,
-            email: normalizedEmail
+            email: normalizedEmail,
+            barberId
         };
 
     } catch (error) {
-        // Si Firestore falla, intenta revertir la cuenta
-        // creada para evitar usuarios sin perfil.
         if (createdUser) {
-            try {
-                await deleteUser(createdUser);
-            } catch (rollbackError) {
-                console.error(
-                    "No se pudo revertir la cuenta:",
-                    rollbackError
-                );
+            throw new Error(
+                "La cuenta de Authentication se creó, pero no se pudo " +
+                "completar su vinculación en Firestore. " +
+                "No intentes registrarla otra vez sin revisar Firebase. " +
+                `UID creado: ${createdUser.uid}. ` +
+                `Detalle: ${error.message}`
+            );
+        }
 
-                throw new Error(
-                    "La cuenta se creó en Authentication, " +
-                    "pero no pudo vincularse al barbero. " +
-                    "Revisa Firebase Authentication antes " +
-                    "de intentar crearla de nuevo."
-                );
-            }
+        if (error.code === "auth/email-already-in-use") {
+            throw new Error(
+                "Este correo electrónico ya está registrado en Firebase."
+            );
+        }
+
+        if (error.code === "auth/operation-not-allowed") {
+            throw new Error(
+                "Activa Email/Password en Firebase Authentication."
+            );
         }
 
         throw error;
 
     } finally {
-        if (secondaryAuth.currentUser) {
-            await signOut(secondaryAuth);
-        }
+        await signOut(secondaryAuth).catch(() => {});
     }
-}
-
-export async function linkExistingBarberAccount({
-    barberId,
-    uid,
-    email
-}) {
-    requireAdmin();
-
-    if (!barberId || !uid || !email) {
-        throw new Error(
-            "Debes proporcionar barbero, UID y correo."
-        );
-    }
-
-    const barberSnapshot = await getDoc(
-        doc(db, "barbers", barberId)
-    );
-
-    if (!barberSnapshot.exists()) {
-        throw new Error(
-            "El barbero seleccionado no existe."
-        );
-    }
-
-    await setDoc(
-        doc(db, "users", uid.trim()),
-        {
-            role: "barber",
-            barberId,
-            active: true,
-            mustChangePassword: true,
-            email: email.trim().toLowerCase(),
-            linkedAt: new Date().toISOString()
-        }
-    );
 }
