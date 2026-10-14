@@ -7,6 +7,7 @@ import {
 } from "./storage.js";
 
 import {
+    getBarbers as getBarbersFromFirestore,
     saveBarber as saveBarberToFirestore
 } from "./firestore-storage.js";
 
@@ -112,10 +113,82 @@ const saveBarberButton =
    INICIALIZACIÓN
 ===================================================== */
 
+async function loadBarbersFromFirebase() {
+    try {
+        const firebaseBarbers =
+            await getBarbersFromFirestore();
+
+        if (!Array.isArray(firebaseBarbers)) {
+            throw new Error(
+                "Firebase no devolvió una lista válida."
+            );
+        }
+
+        /*
+         * Los datos locales se conservan.
+         * Firebase tiene prioridad cuando coincide el ID.
+         *
+         * Esta lectura NO sube automáticamente los
+         * barberos antiguos que solo existen localmente.
+         */
+        const localBarbers = getBarbers();
+
+        const mergedBarbers = new Map(
+            localBarbers
+                .filter(barber => barber && barber.id)
+                .map(barber => [barber.id, barber])
+        );
+
+        for (const barber of firebaseBarbers) {
+            if (barber && barber.id) {
+                mergedBarbers.set(barber.id, barber);
+            }
+        }
+
+        /*
+         * Evitar que una lectura antigua de Firebase
+         * sobrescriba cambios realizados mientras
+         * estaba abierta la página.
+         */
+        if (savingBarber || editingBarberId) {
+            console.info(
+                "Lectura de Firebase aplazada para proteger cambios en curso."
+            );
+            return;
+        }
+
+        saveBarbers(
+            Array.from(mergedBarbers.values())
+        );
+
+        renderSummary();
+        renderBarbers();
+
+        console.info(
+            "Barberos cargados desde Firebase:",
+            firebaseBarbers.length
+        );
+    } catch (error) {
+        console.error(
+            "No se pudieron cargar los barberos desde Firebase:",
+            error
+        );
+
+        showToast(
+            "No se pudo consultar Firebase. Se conservan los datos locales."
+        );
+    }
+}
+
 function initialize() {
     configureEvents();
+
+    // Mostrar inmediatamente los barberos locales.
     renderSummary();
     renderBarbers();
+
+    // Consultar Firebase sin bloquear la interfaz.
+    void loadBarbersFromFirebase();
 }
 
 /* =====================================================
