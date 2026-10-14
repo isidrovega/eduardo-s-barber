@@ -626,6 +626,73 @@
 
             </div>
 
+
+<!-- CUENTA DE ACCESO DEL BARBERO -->
+<section
+    id="barberAccountSection"
+    class="barber-config-section"
+    hidden
+>
+    <div class="barber-config-title">
+        <div>
+            <span class="config-eyebrow">
+                Acceso al sistema
+            </span>
+            <h3>Cuenta de acceso</h3>
+        </div>
+    </div>
+
+    <p>
+        Crea una cuenta para que este barbero pueda
+        ingresar a su panel personal.
+    </p>
+
+    <form id="barberAccountForm">
+        <div class="field">
+            <label for="barberAccountEmail">
+                Correo electrónico
+            </label>
+
+            <input
+                id="barberAccountEmail"
+                type="email"
+                autocomplete="off"
+                placeholder="barbero@correo.com"
+                required
+            >
+        </div>
+
+        <div class="field">
+            <label for="barberAccountPassword">
+                Contraseña inicial
+            </label>
+
+            <input
+                id="barberAccountPassword"
+                type="password"
+                autocomplete="new-password"
+                minlength="8"
+                required
+            >
+        </div>
+
+        <button
+            id="createBarberAccountButton"
+            type="submit"
+            class="btn btn-dark"
+        >
+            Crear cuenta de acceso
+        </button>
+
+        <p
+            id="barberAccountMessage"
+            role="status"
+            aria-live="polite"
+        ></p>
+    </form>
+</section>
+
+
             <!-- =================================================
                  PIE DEL MODAL
             ================================================= -->
@@ -673,6 +740,8 @@
         type="module"
         src="js/barbers.js"
     ></script>
+
+    <script type="module" src="js/barber-accounts.js"></script>
 
 </body>
 

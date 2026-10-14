@@ -23,3 +23,23 @@ firebase-adminsdk*.json
 *.log
 *.tmp
 /eduardo's barber/
+# Dependencias
+node_modules/
+
+# Credenciales privadas
+.env
+.env.*
+!.env.example
+*service-account*.json
+*firebase-adminsdk*.json
+
+# Respaldos locales
+js/barbers.antes-lectura-firebase.js
+js/barbers.respaldo.js
+respaldo-barberos.patch
+
+netlify/functions/*.respaldo.mjs
+
+js/barber-accounts.respaldo.js
+
+js/auth.respaldo.js

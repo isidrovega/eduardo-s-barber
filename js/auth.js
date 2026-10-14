@@ -13,8 +13,6 @@ import {
     getDoc
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 
-// Sustituir por el UID de tu cuenta administradora.
-// Este mismo UID debe utilizarse en las reglas de Firestore.
 export const ADMIN_UID = "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2";
 
 export const ROUTES = {
@@ -23,20 +21,9 @@ export const ROUTES = {
     login: "login.html"
 };
 
-export function waitForUser() {
-    return new Promise((resolve, reject) => {
-        const unsubscribe = onAuthStateChanged(
-            auth,
-            user => {
-                unsubscribe();
-                resolve(user);
-            },
-            error => {
-                unsubscribe();
-                reject(error);
-            }
-        );
-    });
+export async function waitForUser() {
+    await auth.authStateReady();
+    return auth.currentUser;
 }
 
 export async function getUserRole(user) {
@@ -44,33 +31,47 @@ export async function getUserRole(user) {
         return null;
     }
 
-    if (
-        ADMIN_UID !== "REEMPLAZAR_CON_UID_ADMIN" &&
-        user.uid === ADMIN_UID
-    ) {
+    // El administrador conserva su acceso habitual.
+    if (user.uid === ADMIN_UID) {
         return "admin";
     }
 
-    const snapshot = await getDoc(
+    // Verificar el perfil de acceso.
+    const profileSnapshot = await getDoc(
         doc(db, "users", user.uid)
     );
 
-    if (!snapshot.exists()) {
+    if (!profileSnapshot.exists()) {
         return null;
     }
 
-    const profile = snapshot.data();
+    const profile = profileSnapshot.data();
 
     if (
-        profile.role === "barber" &&
-        profile.active === true &&
-        typeof profile.barberId === "string" &&
-        profile.barberId.length > 0
+        profile.role !== "barber" ||
+        profile.active !== true ||
+        typeof profile.barberId !== "string" ||
+        !profile.barberId
     ) {
-        return "barber";
+        return null;
     }
 
-    return null;
+    // Verificar también el estado real del barbero.
+    const barberSnapshot = await getDoc(
+        doc(db, "barbers", profile.barberId)
+    );
+
+    if (!barberSnapshot.exists()) {
+        return null;
+    }
+
+    const barber = barberSnapshot.data();
+
+    if (barber.status !== "active") {
+        return null;
+    }
+
+    return "barber";
 }
 
 export async function login(email, password) {
@@ -80,20 +81,24 @@ export async function login(email, password) {
         password
     );
 
-    const role = await getUserRole(credential.user);
+    try {
+        const role = await getUserRole(credential.user);
 
-    if (!role) {
+        if (!role) {
+            throw new Error(
+                "Tu cuenta no tiene acceso autorizado o está desactivada."
+            );
+        }
+
+        return {
+            user: credential.user,
+            role
+        };
+
+    } catch (error) {
         await signOut(auth);
-
-        throw new Error(
-            "Tu cuenta no tiene acceso autorizado al sistema."
-        );
+        throw error;
     }
-
-    return {
-        user: credential.user,
-        role
-    };
 }
 
 export async function logout() {
@@ -106,25 +111,37 @@ export async function resetPassword(email) {
 }
 
 export async function protectPage(requiredRole) {
-    const user = await waitForUser();
+    try {
+        const user = await waitForUser();
 
-    if (!user) {
+        if (!user) {
+            window.location.replace(ROUTES.login);
+            return null;
+        }
+
+        const role = await getUserRole(user);
+
+        if (!role) {
+            await signOut(auth);
+            window.location.replace(ROUTES.login);
+            return null;
+        }
+
+        if (role !== requiredRole) {
+            window.location.replace(ROUTES[role]);
+            return null;
+        }
+
+        return user;
+
+    } catch (error) {
+        console.error(
+            "Error verificando permisos:",
+            error
+        );
+
+        // No conceder acceso si falla la verificación.
         window.location.replace(ROUTES.login);
         return null;
     }
-
-    const role = await getUserRole(user);
-
-    if (!role) {
-        await signOut(auth);
-        window.location.replace(ROUTES.login);
-        return null;
-    }
-
-    if (role !== requiredRole) {
-        window.location.replace(ROUTES[role]);
-        return null;
-    }
-
-    return user;
 }
