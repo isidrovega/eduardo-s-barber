@@ -1,599 +1,922 @@
-import { services, barbers } from "./data.js";
-import { getCustomers, saveCustomers, getAppointments, normalizePhone, generateId } from "./storage.js";
 
-/* =====================================================
-   STATE
-===================================================== */
+/* =========================================================
+   EDUARDO'S BARBERSHOP
+   CUSTOMERS.JS
+   CLIENTES CON FIREBASE FIRESTORE
+   Sin datos de demostración
+========================================================= */
+
+import {
+    getCustomers,
+    getAppointments,
+    getBarbers,
+    getServices,
+    saveCustomer,
+    normalizePhone,
+    generateId
+} from "./firestore-storage.js";
+
+/* =========================================================
+   ESTADO
+========================================================= */
+
+let customers = [];
+let appointments = [];
+let barbers = [];
+let services = [];
 
 let selectedCustomerId = null;
 let searchTerm = "";
 let toastTimer = null;
+let isSaving = false;
 
-/* =====================================================
-   ELEMENTS
-===================================================== */
+/* =========================================================
+   ELEMENTOS
+========================================================= */
 
-const customersGrid = document.getElementById("customersGrid");
-const customerSearch = document.getElementById("customerSearch");
-const customerResultCount = document.getElementById("customerResultCount");
-const customerModal = document.getElementById("customerModal");
-const newCustomerModal = document.getElementById("newCustomerModal");
-const closeCustomerModalButton = document.getElementById("closeCustomerModal");
-const closeNewCustomerModalButton = document.getElementById("closeNewCustomerModal");
-const newCustomerButton = document.getElementById("newCustomerButton");
-const cancelNewCustomerButton = document.getElementById("cancelNewCustomer");
-const saveNewCustomerButton = document.getElementById("saveNewCustomer");
-const bookCustomerButton = document.getElementById("bookCustomerButton");
+const customersGrid =
+    document.getElementById("customersGrid");
 
-/* =====================================================
-   INITIALIZE
-===================================================== */
+const customerSearch =
+    document.getElementById("customerSearch");
 
-function initialize() {
-  configureEvents();
-  renderCustomers();
-  renderStats();
-}
+const customerResultCount =
+    document.getElementById("customerResultCount");
 
-/* =====================================================
-   EVENTS
-===================================================== */
+const customerModal =
+    document.getElementById("customerModal");
 
-function configureEvents() {
-  customerSearch.addEventListener("input", event => {
-    searchTerm = event.target.value.trim().toLowerCase();
-    renderCustomers();
-  });
-  newCustomerButton.addEventListener("click", openNewCustomerModal);
+const newCustomerModal =
+    document.getElementById("newCustomerModal");
 
-  /*
-   * Cerrar detalle del cliente con X
-   */
-  closeCustomerModalButton.addEventListener("click", event => {
-    event.preventDefault();
-    event.stopPropagation();
-    closeCustomerModal();
-  });
+const closeCustomerModalButton =
+    document.getElementById("closeCustomerModal");
 
-  /*
-   * Cerrar modal nuevo cliente con X
-   */
-  closeNewCustomerModalButton.addEventListener("click", event => {
-    event.preventDefault();
-    event.stopPropagation();
-    closeNewCustomerModal();
-  });
-  cancelNewCustomerButton.addEventListener("click", event => {
-    event.preventDefault();
-    closeNewCustomerModal();
-  });
-  saveNewCustomerButton.addEventListener("click", saveNewCustomer);
-  bookCustomerButton.addEventListener("click", bookSelectedCustomer);
-  customersGrid.addEventListener("click", handleCustomerGridClick);
+const closeNewCustomerModalButton =
+    document.getElementById("closeNewCustomerModal");
 
-  /*
-   * Cerrar detalle haciendo clic
-   * directamente sobre el fondo oscuro.
-   */
-  customerModal.addEventListener("click", event => {
-    if (event.target === customerModal) {
-      closeCustomerModal();
-    }
-  });
+const newCustomerButton =
+    document.getElementById("newCustomerButton");
 
-  /*
-   * Cerrar nuevo cliente haciendo clic
-   * directamente sobre el fondo oscuro.
-   */
-  newCustomerModal.addEventListener("click", event => {
-    if (event.target === newCustomerModal) {
-      closeNewCustomerModal();
-    }
-  });
+const cancelNewCustomerButton =
+    document.getElementById("cancelNewCustomer");
 
-  /*
-   * ESC cierra cualquier modal abierto.
-   */
-  document.addEventListener("keydown", event => {
-    if (event.key !== "Escape") {
-      return;
-    }
-    if (!customerModal.classList.contains("hidden")) {
-      closeCustomerModal();
-      return;
-    }
-    if (!newCustomerModal.classList.contains("hidden")) {
-      closeNewCustomerModal();
-    }
-  });
-}
+const saveNewCustomerButton =
+    document.getElementById("saveNewCustomer");
 
-/* =====================================================
-   MODAL CONTROL
-===================================================== */
+const bookCustomerButton =
+    document.getElementById("bookCustomerButton");
 
-function openCustomerModalElement() {
-  customerModal.classList.remove("hidden");
-  document.body.classList.add("modal-open");
-}
-function closeCustomerModal() {
-  customerModal.classList.add("hidden");
-  selectedCustomerId = null;
-  unlockBodyIfNecessary();
-}
-function openNewCustomerModal() {
-  document.getElementById("newCustomerName").value = "";
-  document.getElementById("newCustomerPhone").value = "";
-  newCustomerModal.classList.remove("hidden");
-  document.body.classList.add("modal-open");
-  setTimeout(() => {
-    document.getElementById("newCustomerName").focus();
-  }, 50);
-}
-function closeNewCustomerModal() {
-  newCustomerModal.classList.add("hidden");
-  unlockBodyIfNecessary();
-}
-function unlockBodyIfNecessary() {
-  const customerClosed = customerModal.classList.contains("hidden");
-  const newCustomerClosed = newCustomerModal.classList.contains("hidden");
-  if (customerClosed && newCustomerClosed) {
-    document.body.classList.remove("modal-open");
-  }
-}
+/* =========================================================
+   INICIALIZACIÓN
+========================================================= */
 
-/* =====================================================
-   STATS
-===================================================== */
-function renderStats() {
-  const customers = getCustomers();
-  const appointments = getAppointments();
-  const completed = appointments.filter(appointment => appointment.status === "completed");
-  const frequent = customers.filter(customer => Number(customer.visits || 0) >= 3);
-  const totalVisits = customers.reduce((total, customer) => total + Number(customer.visits || 0), 0);
-  document.getElementById("customerStats").innerHTML = [statCard("Total clientes", customers.length), statCard("Clientes frecuentes", frequent.length), statCard("Citas completadas", completed.length), statCard("Visitas registradas", totalVisits)].join("");
-}
+async function initialize() {
+    configureEvents();
 
-/* =====================================================
-   CUSTOMER LIST
-===================================================== */
-
-function renderCustomers() {
-  const customers = getCustomers();
-  const appointments = getAppointments();
-  const filtered = customers.filter(customer => {
-    if (!searchTerm) {
-      return true;
-    }
-    const name = customer.name.toLowerCase();
-    const phone = normalizePhone(customer.phone);
-    const normalizedSearch = normalizePhone(searchTerm);
-    const nameMatches = name.includes(searchTerm);
-    const phoneMatches = normalizedSearch.length > 0 && phone.includes(normalizedSearch);
-    return nameMatches || phoneMatches;
-  });
-  customerResultCount.textContent = `${filtered.length} ${filtered.length === 1 ? "cliente" : "clientes"}`;
-  if (!filtered.length) {
     customersGrid.innerHTML = `
-            <div
-                class="panel"
-                style="grid-column: 1 / -1;"
-            >
+        <div class="panel" style="grid-column: 1 / -1;">
+            <div class="empty">
+                Cargando clientes...
+            </div>
+        </div>
+    `;
+
+    await loadData();
+}
+
+/* =========================================================
+   CARGAR DATOS DESDE FIRESTORE
+========================================================= */
+
+async function loadData() {
+    try {
+        const [
+            customersData,
+            appointmentsData,
+            barbersData,
+            servicesData
+        ] = await Promise.all([
+            getCustomers(),
+            getAppointments(),
+            getBarbers(),
+            getServices()
+        ]);
+
+        customers = customersData;
+        appointments = appointmentsData;
+        barbers = barbersData;
+        services = servicesData;
+
+        renderCustomers();
+        renderStats();
+
+    } catch (error) {
+        console.error(
+            "Error cargando datos de Firestore:",
+            error
+        );
+
+        customersGrid.innerHTML = `
+            <div class="panel" style="grid-column: 1 / -1;">
                 <div class="empty">
-                    No se encontraron clientes.
+                    No se pudieron cargar los clientes.
+                    Verifica tu sesión y los permisos de Firebase.
                 </div>
             </div>
         `;
-    return;
-  }
-  customersGrid.innerHTML = filtered.map(customer => {
-    const customerAppointments = getCustomerAppointments(customer, appointments);
-    const lastAppointment = getLastAppointment(customerAppointments);
-    return `
-                        <article class="customer-card">
 
-                            <div class="customer-card-top">
+        customerResultCount.textContent =
+            "Error de conexión";
 
-                                <div class="customer-avatar">
-                                    ${getInitials(customer.name)}
-                                </div>
-
-                                <div class="customer-card-name">
-
-                                    <h3>
-                                        ${escapeHTML(customer.name)}
-                                    </h3>
-
-                                    <p>
-                                        ${escapeHTML(customer.phone)}
-                                    </p>
-
-                                </div>
-
-                            </div>
-
-
-                            <div class="customer-card-info">
-
-                                <div class="customer-info-box">
-
-                                    <span>
-                                        Visitas
-                                    </span>
-
-                                    <strong>
-                                        ${customer.visits}
-                                    </strong>
-
-                                </div>
-
-
-                                <div class="customer-info-box">
-
-                                    <span>
-                                        Última cita
-                                    </span>
-
-                                    <strong>
-                                        ${lastAppointment ? formatDate(lastAppointment.date) : "—"}
-                                    </strong>
-
-                                </div>
-
-                            </div>
-
-
-                            
-
-
-                            <div class="customer-card-actions">
-
-                                <button
-                                    type="button"
-                                    class="btn btn-outline"
-                                    data-action="view"
-                                    data-customer-id="${customer.id}"
-                                >
-                                    Ver cliente
-                                </button>
-
-                                <button
-                                    type="button"
-                                    class="btn btn-dark"
-                                    data-action="book"
-                                    data-customer-id="${customer.id}"
-                                >
-                                    Agendar
-                                </button>
-
-                            </div>
-
-                        </article>
-                    `;
-  }).join("");
+        showToast(
+            "Error al conectar con Firebase."
+        );
+    }
 }
 
-/* =====================================================
-   CUSTOMER GRID ACTIONS
-===================================================== */
+/* =========================================================
+   EVENTOS
+========================================================= */
+
+function configureEvents() {
+    customerSearch.addEventListener("input", event => {
+        searchTerm = event.target.value
+            .trim()
+            .toLowerCase();
+
+        renderCustomers();
+    });
+
+    newCustomerButton.addEventListener(
+        "click",
+        openNewCustomerModal
+    );
+
+    closeCustomerModalButton.addEventListener(
+        "click",
+        event => {
+            event.preventDefault();
+            event.stopPropagation();
+            closeCustomerModal();
+        }
+    );
+
+    closeNewCustomerModalButton.addEventListener(
+        "click",
+        event => {
+            event.preventDefault();
+            event.stopPropagation();
+            closeNewCustomerModal();
+        }
+    );
+
+    cancelNewCustomerButton.addEventListener(
+        "click",
+        event => {
+            event.preventDefault();
+            closeNewCustomerModal();
+        }
+    );
+
+    saveNewCustomerButton.addEventListener(
+        "click",
+        saveNewCustomer
+    );
+
+    bookCustomerButton.addEventListener(
+        "click",
+        bookSelectedCustomer
+    );
+
+    customersGrid.addEventListener(
+        "click",
+        handleCustomerGridClick
+    );
+
+    customerModal.addEventListener(
+        "click",
+        event => {
+            if (event.target === customerModal) {
+                closeCustomerModal();
+            }
+        }
+    );
+
+    newCustomerModal.addEventListener(
+        "click",
+        event => {
+            if (event.target === newCustomerModal) {
+                closeNewCustomerModal();
+            }
+        }
+    );
+
+    document.addEventListener(
+        "keydown",
+        event => {
+            if (event.key !== "Escape") {
+                return;
+            }
+
+            if (
+                !customerModal.classList.contains("hidden")
+            ) {
+                closeCustomerModal();
+                return;
+            }
+
+            if (
+                !newCustomerModal.classList.contains("hidden")
+            ) {
+                closeNewCustomerModal();
+            }
+        }
+    );
+}
+
+/* =========================================================
+   MODALES
+========================================================= */
+
+function openCustomerModalElement() {
+    customerModal.classList.remove("hidden");
+    document.body.classList.add("modal-open");
+}
+
+function closeCustomerModal() {
+    customerModal.classList.add("hidden");
+    selectedCustomerId = null;
+    unlockBodyIfNecessary();
+}
+
+function openNewCustomerModal() {
+    document.getElementById("newCustomerName").value = "";
+    document.getElementById("newCustomerPhone").value = "";
+
+    newCustomerModal.classList.remove("hidden");
+    document.body.classList.add("modal-open");
+
+    setTimeout(() => {
+        document.getElementById("newCustomerName").focus();
+    }, 50);
+}
+
+function closeNewCustomerModal() {
+    newCustomerModal.classList.add("hidden");
+    unlockBodyIfNecessary();
+}
+
+function unlockBodyIfNecessary() {
+    const customerClosed =
+        customerModal.classList.contains("hidden");
+
+    const newCustomerClosed =
+        newCustomerModal.classList.contains("hidden");
+
+    if (customerClosed && newCustomerClosed) {
+        document.body.classList.remove("modal-open");
+    }
+}
+
+/* =========================================================
+   ESTADÍSTICAS
+========================================================= */
+
+function renderStats() {
+    const completed = appointments.filter(
+        appointment =>
+            appointment.status === "completed"
+    );
+
+    const frequent = customers.filter(
+        customer =>
+            Number(customer.visits || 0) >= 3
+    );
+
+    const totalVisits = customers.reduce(
+        (total, customer) =>
+            total + Number(customer.visits || 0),
+        0
+    );
+
+    document.getElementById("customerStats").innerHTML = [
+        statCard("Total clientes", customers.length),
+        statCard("Clientes frecuentes", frequent.length),
+        statCard("Citas completadas", completed.length),
+        statCard("Visitas registradas", totalVisits)
+    ].join("");
+}
+
+/* =========================================================
+   LISTADO DE CLIENTES
+========================================================= */
+
+function renderCustomers() {
+    const filtered = customers.filter(customer => {
+        if (!searchTerm) {
+            return true;
+        }
+
+        const name = String(customer.name || "")
+            .toLowerCase();
+
+        const phone = normalizePhone(customer.phone);
+
+        const normalizedSearch =
+            normalizePhone(searchTerm);
+
+        return (
+            name.includes(searchTerm) ||
+            (
+                normalizedSearch.length > 0 &&
+                phone.includes(normalizedSearch)
+            )
+        );
+    });
+
+    customerResultCount.textContent =
+        `${filtered.length} ${
+            filtered.length === 1
+                ? "cliente"
+                : "clientes"
+        }`;
+
+    if (!filtered.length) {
+        customersGrid.innerHTML = `
+            <div class="panel" style="grid-column: 1 / -1;">
+                <div class="empty">
+                    ${
+                        searchTerm
+                            ? "No se encontraron clientes."
+                            : "Todavía no hay clientes registrados."
+                    }
+                </div>
+            </div>
+        `;
+
+        return;
+    }
+
+    customersGrid.innerHTML = filtered.map(customer => {
+        const customerAppointments =
+            getCustomerAppointments(
+                customer,
+                appointments
+            );
+
+        const lastAppointment =
+            getLastAppointment(customerAppointments);
+
+        return `
+            <article class="customer-card">
+                <div class="customer-card-top">
+                    <div class="customer-avatar">
+                        ${escapeHTML(
+                            getInitials(customer.name)
+                        )}
+                    </div>
+
+                    <div class="customer-card-name">
+                        <h3>
+                            ${escapeHTML(customer.name)}
+                        </h3>
+
+                        <p>
+                            ${escapeHTML(customer.phone)}
+                        </p>
+                    </div>
+                </div>
+
+                <div class="customer-card-info">
+                    <div class="customer-info-box">
+                        <span>Visitas</span>
+                        <strong>
+                            ${Number(customer.visits) || 0}
+                        </strong>
+                    </div>
+
+                    <div class="customer-info-box">
+                        <span>Última cita</span>
+                        <strong>
+                            ${
+                                lastAppointment
+                                    ? formatDate(
+                                        lastAppointment.date
+                                    )
+                                    : "—"
+                            }
+                        </strong>
+                    </div>
+                </div>
+
+                <div class="customer-card-actions">
+                    <button
+                        type="button"
+                        class="btn btn-outline"
+                        data-action="view"
+                        data-customer-id="${
+                            escapeHTML(customer.id)
+                        }"
+                    >
+                        Ver cliente
+                    </button>
+
+                    <button
+                        type="button"
+                        class="btn btn-dark"
+                        data-action="book"
+                        data-customer-id="${
+                            escapeHTML(customer.id)
+                        }"
+                    >
+                        Agendar
+                    </button>
+                </div>
+            </article>
+        `;
+    }).join("");
+}
+
+/* =========================================================
+   ACCIONES DE TARJETAS
+========================================================= */
 
 function handleCustomerGridClick(event) {
-  const button = event.target.closest("[data-action]");
-  if (!button) {
-    return;
-  }
-  const customerId = button.dataset.customerId;
-  const action = button.dataset.action;
-  if (action === "view") {
-    openCustomerModal(customerId);
-    return;
-  }
-  if (action === "book") {
-    selectedCustomerId = customerId;
-    bookSelectedCustomer();
-  }
+    const button =
+        event.target.closest("[data-action]");
+
+    if (!button) {
+        return;
+    }
+
+    const customerId = button.dataset.customerId;
+    const action = button.dataset.action;
+
+    if (action === "view") {
+        openCustomerModal(customerId);
+        return;
+    }
+
+    if (action === "book") {
+        selectedCustomerId = customerId;
+        bookSelectedCustomer();
+    }
 }
 
-/* =====================================================
-   OPEN CUSTOMER
-===================================================== */
+/* =========================================================
+   DETALLE DEL CLIENTE
+========================================================= */
 
 function openCustomerModal(customerId) {
-  const customers = getCustomers();
-  const customer = customers.find(item => item.id === customerId);
-  if (!customer) {
-    showToast("No se encontró el cliente.");
-    return;
-  }
-  selectedCustomerId = customer.id;
-  const appointments = getCustomerAppointments(customer, getAppointments());
-  const completed = appointments.filter(appointment => appointment.status === "completed").length;
-  const cancelled = appointments.filter(appointment => appointment.status === "cancelled").length;
-  document.getElementById("customerModalName").textContent = customer.name;
-  document.getElementById("customerModalPhone").textContent = customer.phone;
-  document.getElementById("modalVisits").textContent = customer.visits;
-  document.getElementById("modalAppointments").textContent = appointments.length;
-  document.getElementById("modalCompleted").textContent = completed;
-  document.getElementById("modalCancelled").textContent = cancelled;
-  renderCustomerHistory(appointments);
-  openCustomerModalElement();
+    const customer = customers.find(
+        item => item.id === customerId
+    );
+
+    if (!customer) {
+        showToast("No se encontró el cliente.");
+        return;
+    }
+
+    selectedCustomerId = customer.id;
+
+    const customerAppointments =
+        getCustomerAppointments(
+            customer,
+            appointments
+        );
+
+    const completed = customerAppointments.filter(
+        appointment =>
+            appointment.status === "completed"
+    ).length;
+
+    const cancelled = customerAppointments.filter(
+        appointment =>
+            appointment.status === "cancelled"
+    ).length;
+
+    document.getElementById(
+        "customerModalName"
+    ).textContent = customer.name;
+
+    document.getElementById(
+        "customerModalPhone"
+    ).textContent = customer.phone;
+
+    document.getElementById(
+        "modalVisits"
+    ).textContent = Number(customer.visits) || 0;
+
+    document.getElementById(
+        "modalAppointments"
+    ).textContent = customerAppointments.length;
+
+    document.getElementById(
+        "modalCompleted"
+    ).textContent = completed;
+
+    document.getElementById(
+        "modalCancelled"
+    ).textContent = cancelled;
+
+    renderCustomerHistory(customerAppointments);
+    openCustomerModalElement();
 }
 
-/* =====================================================
-   LOYALTY
-===================================================== */
+/* =========================================================
+   HISTORIAL DE CITAS
+========================================================= */
 
-/* =====================================================
-   HISTORY
-===================================================== */
+function renderCustomerHistory(customerAppointments) {
+    const container =
+        document.getElementById("customerHistory");
 
-function renderCustomerHistory(appointments) {
-  const container = document.getElementById("customerHistory");
-  if (!appointments.length) {
-    container.innerHTML = `
+    if (!customerAppointments.length) {
+        container.innerHTML = `
             <div class="empty">
                 Este cliente todavía no tiene citas registradas.
             </div>
         `;
-    return;
-  }
-  const sorted = [...appointments].sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`));
-  container.innerHTML = sorted.map(appointment => {
-    const service = getService(appointment.serviceId);
-    const barber = getBarber(appointment.barberId);
-    return `
-                        <div class="history-row">
 
-                            <div class="history-date">
+        return;
+    }
 
-                                <strong>
-                                    ${formatDate(appointment.date)}
-                                </strong>
+    const sorted = [...customerAppointments].sort(
+        (a, b) =>
+            `${b.date} ${b.time}`.localeCompare(
+                `${a.date} ${a.time}`
+            )
+    );
 
-                                <span>
-                                    ${formatTime(appointment.time)}
-                                </span>
+    container.innerHTML = sorted.map(appointment => {
+        const service = getService(appointment.serviceId);
+        const barber = getBarber(appointment.barberId);
 
-                            </div>
+        return `
+            <div class="history-row">
+                <div class="history-date">
+                    <strong>
+                        ${formatDate(appointment.date)}
+                    </strong>
 
+                    <span>
+                        ${formatTime(appointment.time)}
+                    </span>
+                </div>
 
-                            <div class="history-service">
+                <div class="history-service">
+                    <strong>
+                        ${escapeHTML(service.name)}
+                    </strong>
 
-                                <strong>
-                                    ${service.name}
-                                </strong>
+                    <span>
+                        $${escapeHTML(service.price)}
+                        ·
+                        ${escapeHTML(service.duration)} min
+                    </span>
+                </div>
 
-                                <span>
-                                    $${service.price}
-                                    ·
-                                    ${service.duration} min
-                                </span>
+                <div class="history-barber">
+                    ${escapeHTML(barber.name)}
+                </div>
 
-                            </div>
-
-
-                            <div class="history-barber">
-                                ${barber.name}
-                            </div>
-
-
-                            <div class="history-status">
-                                ${renderStatus(appointment.status)}
-                            </div>
-
-                        </div>
-                    `;
-  }).join("");
+                <div class="history-status">
+                    ${renderStatus(appointment.status)}
+                </div>
+            </div>
+        `;
+    }).join("");
 }
 
-/* =====================================================
-   ADD VISIT
-===================================================== */
-
-/* =====================================================
-   BOOK CUSTOMER
-===================================================== */
+/* =========================================================
+   AGENDAR CITA
+========================================================= */
 
 function bookSelectedCustomer() {
-  if (!selectedCustomerId) {
-    return;
-  }
-  const customers = getCustomers();
-  const customer = customers.find(item => item.id === selectedCustomerId);
-  if (!customer) {
-    showToast("No se encontró el cliente.");
-    return;
-  }
-  sessionStorage.setItem("barbershop_booking_customer", JSON.stringify({
-    id: customer.id,
-    name: customer.name,
-    phone: customer.phone
-  }));
-  window.location.href = "citas.html?new=1";
+    if (!selectedCustomerId) {
+        return;
+    }
+
+    const customer = customers.find(
+        item => item.id === selectedCustomerId
+    );
+
+    if (!customer) {
+        showToast("No se encontró el cliente.");
+        return;
+    }
+
+    sessionStorage.setItem(
+        "barbershop_booking_customer",
+        JSON.stringify({
+            id: customer.id,
+            name: customer.name,
+            phone: customer.phone
+        })
+    );
+
+    window.location.href = "citas.html?new=1";
 }
 
-/* =====================================================
-   NEW CUSTOMER
-===================================================== */
+/* =========================================================
+   REGISTRAR NUEVO CLIENTE
+========================================================= */
 
-function saveNewCustomer() {
-  const name = document.getElementById("newCustomerName").value.trim();
-  const phone = document.getElementById("newCustomerPhone").value.trim();
-  if (!name) {
-    showToast("Ingresa el nombre del cliente.");
-    return;
-  }
-  if (normalizePhone(phone).length < 7) {
-    showToast("Ingresa un teléfono válido.");
-    return;
-  }
-  const customers = getCustomers();
-  const exists = customers.some(customer => normalizePhone(customer.phone) === normalizePhone(phone));
-  if (exists) {
-    showToast("Ya existe un cliente con ese teléfono.");
-    return;
-  }
-  customers.push({
-    id: generateId("customer"),
-    name,
-    phone,
-    visits: 0
-  });
-  saveCustomers(customers);
-  closeNewCustomerModal();
-  renderStats();
-  renderCustomers();
-  showToast(`${name} fue registrado correctamente.`);
+async function saveNewCustomer() {
+    if (isSaving) {
+        return;
+    }
+
+    const name = document.getElementById(
+        "newCustomerName"
+    ).value.trim();
+
+    const phone = document.getElementById(
+        "newCustomerPhone"
+    ).value.trim();
+
+    if (!name) {
+        showToast("Ingresa el nombre del cliente.");
+        return;
+    }
+
+    if (normalizePhone(phone).length < 7) {
+        showToast("Ingresa un teléfono válido.");
+        return;
+    }
+
+    const normalized = normalizePhone(phone);
+
+    const exists = customers.some(
+        customer =>
+            normalizePhone(customer.phone) === normalized
+    );
+
+    if (exists) {
+        showToast(
+            "Ya existe un cliente con ese teléfono."
+        );
+        return;
+    }
+
+    isSaving = true;
+    saveNewCustomerButton.disabled = true;
+
+    try {
+        await saveCustomer({
+            id: generateId("customer"),
+            name,
+            phone,
+            visits: 0
+        });
+
+        await loadData();
+
+        closeNewCustomerModal();
+
+        showToast(
+            `${name} fue registrado correctamente.`
+        );
+
+    } catch (error) {
+        console.error(
+            "Error guardando cliente:",
+            error
+        );
+
+        showToast(
+            "No se pudo guardar el cliente en Firebase."
+        );
+
+    } finally {
+        isSaving = false;
+        saveNewCustomerButton.disabled = false;
+    }
 }
 
-/* =====================================================
-   CUSTOMER APPOINTMENTS
-===================================================== */
+/* =========================================================
+   CITAS DEL CLIENTE
+========================================================= */
 
-function getCustomerAppointments(customer, appointments) {
-  return appointments.filter(appointment => normalizePhone(appointment.phone) === normalizePhone(customer.phone));
+function getCustomerAppointments(
+    customer,
+    customerAppointments
+) {
+    const customerPhone =
+        normalizePhone(customer.phone);
+
+    return customerAppointments.filter(appointment => {
+        if (
+            appointment.customerId &&
+            appointment.customerId === customer.id
+        ) {
+            return true;
+        }
+
+        return (
+            customerPhone.length > 0 &&
+            normalizePhone(appointment.phone) ===
+                customerPhone
+        );
+    });
 }
 
-/* =====================================================
-   LAST APPOINTMENT
-===================================================== */
+/* =========================================================
+   ÚLTIMA CITA
+========================================================= */
 
-function getLastAppointment(appointments) {
-  if (!appointments.length) {
-    return null;
-  }
-  return [...appointments].sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`))[0];
+function getLastAppointment(customerAppointments) {
+    if (!customerAppointments.length) {
+        return null;
+    }
+
+    return [...customerAppointments].sort(
+        (a, b) =>
+            `${b.date} ${b.time}`.localeCompare(
+                `${a.date} ${a.time}`
+            )
+    )[0];
 }
 
-/* =====================================================
-   LOYALTY PROGRESS
-===================================================== */
-
-/* =====================================================
-   SMALL STAMPS
-===================================================== */
-
-/* =====================================================
-   INITIALS
-===================================================== */
+/* =========================================================
+   INICIALES
+========================================================= */
 
 function getInitials(name) {
-  return String(name).trim().split(/\s+/).slice(0, 2).map(part => part.charAt(0).toUpperCase()).join("");
+    return String(name || "")
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map(part =>
+            part.charAt(0).toUpperCase()
+        )
+        .join("");
 }
 
-/* =====================================================
-   SERVICE
-===================================================== */
+/* =========================================================
+   SERVICIO
+========================================================= */
 
 function getService(id) {
-  return services.find(service => service.id === id) || services[0];
+    return services.find(
+        service => service.id === id
+    ) || {
+        name: "Servicio no disponible",
+        price: "—",
+        duration: "—"
+    };
 }
 
-/* =====================================================
-   BARBER
-===================================================== */
+/* =========================================================
+   BARBERO
+========================================================= */
 
 function getBarber(id) {
-  return barbers.find(barber => barber.id === id) || barbers[0];
+    return barbers.find(
+        barber => barber.id === id
+    ) || {
+        name: "Barbero no disponible"
+    };
 }
 
-/* =====================================================
-   FORMAT DATE
-===================================================== */
+/* =========================================================
+   FORMATO DE FECHA
+========================================================= */
 
 function formatDate(dateString) {
-  const date = new Date(`${dateString}T12:00:00`);
-  return new Intl.DateTimeFormat("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric"
-  }).format(date);
+    if (!dateString) {
+        return "—";
+    }
+
+    const date = new Date(
+        `${dateString}T12:00:00`
+    );
+
+    if (Number.isNaN(date.getTime())) {
+        return "—";
+    }
+
+    return new Intl.DateTimeFormat("es-MX", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric"
+    }).format(date);
 }
 
-/* =====================================================
-   FORMAT TIME
-===================================================== */
+/* =========================================================
+   FORMATO DE HORA
+========================================================= */
 
 function formatTime(time) {
-  const [hours, minutes] = time.split(":").map(Number);
-  const period = hours >= 12 ? "PM" : "AM";
-  const hour = hours % 12 || 12;
-  return `${hour}:${String(minutes).padStart(2, "0")} ${period}`;
+    if (!time) {
+        return "—";
+    }
+
+    const [hours, minutes] = String(time)
+        .split(":")
+        .map(Number);
+
+    if (
+        !Number.isFinite(hours) ||
+        !Number.isFinite(minutes)
+    ) {
+        return "—";
+    }
+
+    const period = hours >= 12 ? "PM" : "AM";
+    const hour = hours % 12 || 12;
+
+    return `${
+        hour
+    }:${
+        String(minutes).padStart(2, "0")
+    } ${period}`;
 }
 
-/* =====================================================
-   STATUS
-===================================================== */
+/* =========================================================
+   ESTADOS
+========================================================= */
 
 function renderStatus(status) {
-  const labels = {
-    pending: "Pendiente",
-    confirmed: "Confirmada",
-    completed: "Completada",
-    cancelled: "Cancelada",
-    "no-show": "No asistió"
-  };
-  return `
-        <span
-            class="
-                status
-                ${status}
-            "
-        >
-            ${labels[status] || status}
+    const labels = {
+        pending: "Pendiente",
+        confirmed: "Confirmada",
+        completed: "Completada",
+        cancelled: "Cancelada",
+        "no-show": "No asistió"
+    };
+
+    const safeStatus = String(status || "pending");
+
+    return `
+        <span class="status ${escapeHTML(safeStatus)}">
+            ${
+                escapeHTML(
+                    labels[safeStatus] || safeStatus
+                )
+            }
         </span>
     `;
 }
 
-/* =====================================================
-   STAT CARD
-===================================================== */
+/* =========================================================
+   TARJETA DE ESTADÍSTICA
+========================================================= */
 
 function statCard(label, value) {
-  return `
+    return `
         <article class="stat-card">
-
             <span>
-                ${label}
+                ${escapeHTML(label)}
             </span>
 
             <strong>
-                ${value}
+                ${escapeHTML(value)}
             </strong>
-
         </article>
     `;
 }
 
-/* =====================================================
-   ESCAPE HTML
-===================================================== */
+/* =========================================================
+   SEGURIDAD HTML
+========================================================= */
 
 function escapeHTML(value) {
-  const element = document.createElement("div");
-  element.textContent = String(value || "");
-  return element.innerHTML;
+    const element =
+        document.createElement("div");
+
+    element.textContent =
+        String(value ?? "");
+
+    return element.innerHTML;
 }
 
-/* =====================================================
-   TOAST
-===================================================== */
+/* =========================================================
+   NOTIFICACIONES
+========================================================= */
 
 function showToast(message) {
-  const toast = document.getElementById("toast");
-  if (!toast) {
-    return;
-  }
-  toast.textContent = message;
-  toast.classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    toast.classList.remove("show");
-  }, 2800);
+    const toast =
+        document.getElementById("toast");
+
+    if (!toast) {
+        console.log(message);
+        return;
+    }
+
+    toast.textContent = message;
+    toast.classList.add("show");
+
+    clearTimeout(toastTimer);
+
+    toastTimer = setTimeout(() => {
+        toast.classList.remove("show");
+    }, 2800);
 }
 
-/* =====================================================
-   START
-===================================================== */
+/* =========================================================
+   INICIAR
+========================================================= */
 
 initialize();
