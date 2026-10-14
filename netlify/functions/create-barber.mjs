@@ -19,8 +19,11 @@ function getFirebaseAdmin() {
     const projectId = process.env.FIREBASE_PROJECT_ID;
     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
 
-    const privateKey = process.env.FIREBASE_PRIVATE_KEY
-        ?.replace(/\\n/g, "\n");
+   const privateKey = (process.env.FIREBASE_PRIVATE_KEY || "")
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/\\n/g, "\n")
+    .trim();
 
     if (!projectId || !clientEmail || !privateKey) {
         throw new Error(
@@ -29,10 +32,10 @@ function getFirebaseAdmin() {
     }
 
     const app = getApps()[0] || initializeApp({
-        credential: cert({
+      credential: cert({
     projectId,
     clientEmail,
-    privateKey: privateKey.replace(/\\n/g, "\n").trim()
+    privateKey
 })
     });
 
@@ -41,6 +44,13 @@ function getFirebaseAdmin() {
         adminDb: getFirestore(app)
     };
 }
+
+console.log("Diagnóstico de clave Firebase:", {
+    tieneInicio: privateKey.startsWith("-----BEGIN PRIVATE KEY-----"),
+    tieneFinal: privateKey.endsWith("-----END PRIVATE KEY-----"),
+    lineas: privateKey.split("\n").length,
+    contieneSaltosLiterales: privateKey.includes("\\n")
+});
 
 function response(statusCode, data) {
     return new Response(
