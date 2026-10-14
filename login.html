@@ -1,0 +1,118 @@
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <meta name="theme-color" content="#0b0b0b">
+    <title>Iniciar sesión | EDUARDO'S BARBERSHOP</title>
+
+    <link rel="stylesheet" href="css/login.css">
+</head>
+
+<body>
+    <main class="login-page">
+        <section class="login-card"
+                 aria-labelledby="loginTitle">
+
+            <div class="brand">
+                <img
+                    src="assets/logo.png"
+                    alt="Eduardo's Barbershop"
+                    class="brand-logo"
+                >
+
+                <p class="brand-subtitle">
+                    SISTEMA DE GESTIÓN
+                </p>
+            </div>
+
+            <div class="login-heading">
+                <h1 id="loginTitle">Bienvenido</h1>
+
+                <p>
+                    Ingresa con tu cuenta autorizada
+                    para acceder al sistema.
+                </p>
+            </div>
+
+            <form id="loginForm">
+
+                <div class="field">
+                    <label for="loginEmail">
+                        Correo electrónico
+                    </label>
+
+                    <input
+                        id="loginEmail"
+                        type="email"
+                        autocomplete="username"
+                        placeholder="usuario@correo.com"
+                        required
+                    >
+                </div>
+
+                <div class="field">
+                    <label for="loginPassword">
+                        Contraseña
+                    </label>
+
+                    <div class="password-wrapper">
+                        <input
+                            id="loginPassword"
+                            type="password"
+                            autocomplete="current-password"
+                            placeholder="Tu contraseña"
+                            required
+                        >
+
+                        <button
+                            id="togglePassword"
+                            class="password-toggle"
+                            type="button"
+                            aria-label="Mostrar contraseña"
+                            aria-pressed="false"
+                        >
+                            Mostrar
+                        </button>
+                    </div>
+                </div>
+
+                <button
+                    id="loginButton"
+                    class="login-button"
+                    type="submit"
+                >
+                    INICIAR SESIÓN
+                    <span aria-hidden="true">→</span>
+                </button>
+
+                <button
+                    id="forgotPasswordButton"
+                    class="forgot-password"
+                    type="button"
+                >
+                    ¿Olvidaste tu contraseña?
+                </button>
+
+                <p
+                    id="loginMessage"
+                    class="login-message"
+                    role="status"
+                    aria-live="polite"
+                ></p>
+            </form>
+
+            <div class="login-footer">
+                <span>✂</span>
+                Acceso exclusivo para personal autorizado
+            </div>
+
+        </section>
+    </main>
+
+    <script type="module" src="js/login.js"></script>
+</body>
+</html>
