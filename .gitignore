@@ -1,0 +1,24 @@
+
+# Dependencias
+node_modules/
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Configuración local del editor
+.vscode/
+
+# Variables y credenciales privadas
+.env
+.env.*
+!.env.example
+
+# Claves privadas de Firebase
+*serviceAccount*.json
+*service-account*.json
+firebase-adminsdk*.json
+
+# Archivos temporales
+*.log
+*.tmp

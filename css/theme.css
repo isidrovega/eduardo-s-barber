@@ -1,0 +1,1594 @@
+
+/* ==========================================================
+   EDUARDO'S BARBERSHOP
+   TEMA PREMIUM NEGRO Y DORADO
+   Compatible con la estructura HTML existente
+========================================================== */
+
+:root {
+    --brand: #d7a65c;
+    --brand-dark: #b8843c;
+    --brand-deep: #090909;
+    --brand-hover: #e8bd7b;
+    --brand-soft: #292115;
+
+    --background: #090909;
+    --surface: #171717;
+    --surface-secondary: #202020;
+    --border: #303030;
+
+    --text: #f5f0e8;
+    --muted: #a7a7a7;
+    --dark: #d7a65c;
+
+    --green: #4fce83;
+    --green-light: #173525;
+    --blue: #80b5ff;
+    --blue-light: #192a42;
+    --orange: #e8b75e;
+    --orange-light: #3b2c12;
+    --red: #ff8585;
+    --red-light: #3c2020;
+    --purple: #bd9aff;
+
+    --radius: 12px;
+    --shadow: 0 10px 32px rgba(0, 0, 0, .25);
+
+    color-scheme: dark;
+}
+
+/* BASE */
+
+html {
+    background: var(--background);
+}
+
+body {
+    background: var(--background);
+    color: var(--text);
+    font-family: Inter, "Segoe UI", Arial, sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+    font: inherit;
+}
+
+button {
+    cursor: pointer;
+}
+
+::selection {
+    background: #d7a65c;
+    color: #080808;
+}
+
+:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 3px;
+}
+
+/* ESTRUCTURA */
+
+.app {
+    background: #090909;
+}
+
+.main {
+    background:
+        radial-gradient(
+            ellipse at 70% 0%,
+            rgba(215,166,92,.045),
+            transparent 45%
+        ),
+        #090909;
+    min-width: 0;
+}
+
+.content {
+    padding: 30px;
+}
+
+/* SIDEBAR */
+
+.sidebar {
+    background:
+        repeating-linear-gradient(
+            130deg,
+            transparent 0 8px,
+            rgba(255,255,255,.012) 9px 10px
+        ),
+        linear-gradient(160deg, #141414, #070707);
+
+    border-right: 1px solid #75552b;
+    box-shadow: 8px 0 32px rgba(0,0,0,.25);
+}
+
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    min-height: 105px;
+    margin-bottom: 26px;
+    padding: 12px 4px;
+    color: #e8b873;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 1px;
+    text-align: center;
+    line-height: 1.3;
+}
+
+.sidebar-brand::after {
+    content: "BARBERSHOP";
+    margin-top: 6px;
+    color: #d7a65c;
+    font-family: Arial, sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 4px;
+}
+
+.sidebar-brand img {
+    display: block;
+    width: 100%;
+    max-width: 205px;
+    max-height: 125px;
+    object-fit: contain;
+}
+
+.sidebar-brand:has(img)::after {
+    display: none;
+}
+
+.sidebar-label {
+    color: #858585;
+    font-size: 10px;
+    letter-spacing: 2px;
+    margin-bottom: 16px;
+}
+
+.sidebar-nav {
+    gap: 8px;
+}
+
+.sidebar-link {
+    color: #c8c8c8;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 13px 14px;
+    font-size: 13px;
+    transition: background .2s, color .2s, border-color .2s;
+}
+
+.sidebar-link > span {
+    color: #d7a65c;
+    font-size: 18px;
+    width: 22px;
+}
+
+.sidebar-link:hover {
+    background: #262017;
+    color: #f2c580;
+    border-color: #564022;
+}
+
+.sidebar-link.active {
+    background: linear-gradient(100deg, #40301a, #231b12);
+    border: 1px solid #b88947;
+    color: #efbd74;
+    font-weight: 700;
+    box-shadow: inset 0 0 18px rgba(215,166,92,.08);
+}
+
+/* BARRA SUPERIOR */
+
+.topbar {
+    background: #101010;
+    border-bottom: 1px solid #303030;
+    min-height: 70px;
+}
+
+.topbar h2 {
+    color: #f2f2f2;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.admin-user {
+    color: #e0e0e0;
+}
+
+.avatar {
+    background: #111111;
+    border: 1px solid #a57b41;
+    color: #e8b873;
+    width: 38px;
+    height: 38px;
+}
+
+/* TÍTULOS */
+
+.page-heading {
+    margin-bottom: 25px;
+    gap: 20px;
+}
+
+.page-heading h1 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: clamp(30px, 3.5vw, 48px);
+    line-height: 1.15;
+    font-weight: 700;
+    color: #f0d4aa;
+}
+
+.page-heading p {
+    color: #a8a8a8;
+    margin-top: 6px;
+    font-size: 13px;
+}
+
+h1, h2, h3, h4 {
+    color: var(--text);
+}
+
+/* BOTONES */
+
+.btn {
+    border-radius: 9px;
+    font-weight: 700;
+    transition: transform .2s, background .2s, box-shadow .2s;
+}
+
+.btn-dark {
+    color: #14100b;
+    background: linear-gradient(
+        135deg,
+        #f2c987,
+        #c7944d
+    );
+    border: 1px solid #e5b876;
+    box-shadow: 0 5px 18px rgba(215,166,92,.1);
+}
+
+.btn-dark:hover {
+    background: linear-gradient(
+        135deg,
+        #ffdc9d,
+        #d9a45a
+    );
+    box-shadow: 0 8px 24px rgba(215,166,92,.2);
+}
+
+.btn-outline {
+    background: #141414;
+    border: 1px solid #a77a3e;
+    color: #e8b873;
+}
+
+.btn-outline:hover {
+    background: #2d2418;
+    border-color: #e8b873;
+    color: #ffd597;
+}
+
+.text-link {
+    color: #e8b873;
+}
+
+.text-link:hover {
+    color: #ffe0a9;
+}
+
+/* TARJETAS Y PANELES */
+
+.panel,
+.unified-card,
+.report-module-card,
+.customer-search-panel {
+    background: linear-gradient(
+        145deg,
+        #1b1b1b,
+        #121212
+    );
+    color: var(--text);
+    border: 1px solid #303030;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+}
+
+.panel-header {
+    border-bottom: 1px solid #303030;
+}
+
+.panel-header h3,
+.unified-card h3 {
+    font-family: Georgia, "Times New Roman", serif;
+    color: #f4eee6;
+    font-size: 20px;
+}
+
+.panel-header p,
+.unified-card p {
+    color: #aaa;
+}
+
+/* ESTADÍSTICAS */
+
+.stats-grid > *,
+.barber-summary > *,
+.module-summary > *,
+.module-card-grid > *,
+.barbers-grid > *,
+.customers-grid > * {
+    background-color: #191919;
+    color: #f4eee6;
+    border-color: #343434;
+    box-shadow: 0 8px 24px rgba(0,0,0,.16);
+}
+
+.stats-grid > *,
+.module-card-grid > *,
+.barbers-grid > *,
+.customers-grid > * {
+    border-radius: 12px;
+}
+
+.stats-grid strong,
+.stats-grid h3,
+.stats-grid h2,
+.module-summary strong,
+.barber-summary strong {
+    color: #e9b771;
+}
+
+.stats-grid p,
+.stats-grid span,
+.module-summary span,
+.barber-summary span {
+    color: #b5b5b5;
+}
+
+.module-summary {
+    background: #191919;
+    border: 1px solid #333;
+    border-radius: 12px;
+}
+
+.module-summary-divider {
+    background: #373737;
+}
+
+/* FILTROS */
+
+.filters,
+.module-filters {
+    gap: 8px;
+}
+
+.filter {
+    background: #1c1c1c;
+    border: 1px solid #353535;
+    border-radius: 8px;
+    color: #bbb;
+    padding: 9px 14px;
+}
+
+.filter:hover {
+    background: #292319;
+    color: #e8b873;
+    border-color: #9b743e;
+}
+
+.filter.active {
+    background: #40301b;
+    color: #f0be79;
+    border: 1px solid #bc8d4b;
+}
+
+/* TABLAS */
+
+.table-wrapper {
+    overflow-x: auto;
+}
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    color: #eee;
+}
+
+thead {
+    background: #202020;
+}
+
+th {
+    color: #e3b475;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+}
+
+td {
+    color: #e5e5e5;
+}
+
+th,
+td {
+    border-bottom: 1px solid #303030;
+    padding: 14px;
+}
+
+tbody tr {
+    background: transparent;
+    transition: background .15s;
+}
+
+tbody tr:hover {
+    background: #24201a;
+}
+
+/* FORMULARIOS */
+
+.field label {
+    color: #e0c49c;
+}
+
+.field input,
+.field select,
+.field textarea,
+.module-search input,
+.customer-search input,
+input[type="search"] {
+    background: #111111;
+    color: #f3f3f3;
+    border: 1px solid #424242;
+    border-radius: 8px;
+}
+
+.field input:focus,
+.field select:focus,
+.field textarea:focus,
+.module-search input:focus,
+.customer-search input:focus {
+    background: #171717;
+    border-color: #d7a65c;
+    box-shadow: 0 0 0 3px rgba(215,166,92,.12);
+    outline: none;
+}
+
+input::placeholder,
+textarea::placeholder {
+    color: #858585;
+}
+
+select option {
+    background: #181818;
+    color: #fff;
+}
+
+/* MODALES */
+
+.modal-overlay {
+    background: rgba(0,0,0,.82);
+    backdrop-filter: blur(5px);
+}
+
+.modal,
+.unified-modal,
+.barber-modern-modal,
+.customer-modal {
+    background: #191919;
+    color: #f1f1f1;
+    border: 1px solid #5a4328;
+    border-radius: 15px;
+    box-shadow: 0 25px 80px rgba(0,0,0,.6);
+}
+
+.modal-header,
+.unified-modal-header,
+.barber-modal-hero {
+    background: linear-gradient(
+        135deg,
+        #292015,
+        #151515
+    );
+    border-bottom: 1px solid #4b3823;
+    color: #f4d3a1;
+}
+
+.modal-header h2,
+.unified-modal-header h2,
+.barber-modal-hero h2 {
+    color: #f4d3a1;
+}
+
+.modal-body,
+.unified-modal-body,
+.barber-modern-body {
+    background: #191919;
+    color: #eee;
+}
+
+.modal-close,
+.unified-modal-close,
+.barber-modern-close {
+    color: #e8b873;
+    background: #30271d;
+    border: 1px solid #5a4328;
+    border-radius: 50%;
+}
+
+.modal-close:hover,
+.unified-modal-close:hover,
+.barber-modern-close:hover {
+    background: #513c23;
+    color: #fff;
+}
+
+/* ELEMENTOS DE MÓDULOS */
+
+.module-toolbar,
+.module-list-heading,
+.customer-list-header {
+    background: #191919;
+    color: #eee;
+    border-color: #333;
+}
+
+.module-toolbar-title,
+.customer-list-header strong {
+    color: #e8b873;
+}
+
+.unified-card-avatar,
+.unified-modal-avatar,
+.barber-modal-avatar {
+    background: #382a19;
+    color: #edbb77;
+    border: 1px solid #8c6838;
+}
+
+.unified-config-section,
+.barber-config-section {
+    background: #1d1d1d;
+    border-color: #383838;
+    color: #eee;
+}
+
+.config-eyebrow {
+    color: #d7a65c;
+}
+
+/* BOTONES DE ACCIONES RÁPIDAS */
+
+.quick-actions .btn {
+    min-height: 48px;
+}
+
+.quick-actions .btn:not(.btn-dark) {
+    background: #191919;
+    border: 1px solid #444;
+    color: #e8b873;
+}
+
+.quick-actions .btn:not(.btn-dark):hover {
+    background: #30271b;
+    border-color: #a57b41;
+}
+
+/* ELEMENTOS DINÁMICOS */
+
+.dashboard-appointment {
+    border-color: #333;
+    color: #eee;
+}
+
+.dashboard-appointment:hover {
+    background: #252019;
+}
+
+.time-grid button {
+    background: #1d1d1d;
+    color: #e8b873;
+    border: 1px solid #4b4032;
+}
+
+.time-grid button:hover {
+    background: #342817;
+    border-color: #d7a65c;
+}
+
+.time-grid button.selected,
+.time-grid button.active {
+    background: #d7a65c;
+    color: #101010;
+}
+
+/* SCROLLBAR */
+
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #111;
+}
+
+::-webkit-scrollbar-thumb {
+    background: #554027;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #a57b41;
+}
+
+/* RESPONSIVE */
+
+@media (max-width: 1050px) {
+    .content {
+        padding: 22px;
+    }
+}
+
+@media (max-width: 800px) {
+    .app {
+        display: block;
+    }
+
+    .sidebar {
+        position: static;
+        width: 100%;
+        min-height: auto;
+        display: flex;
+        align-items: center;
+        overflow-x: auto;
+        border-right: 0;
+        border-bottom: 1px solid #75552b;
+        padding: 12px;
+    }
+
+    .sidebar-brand {
+        min-height: auto;
+        margin: 0 18px 0 0;
+        font-size: 16px;
+        flex-shrink: 0;
+    }
+
+    .sidebar-brand::after {
+        font-size: 8px;
+        letter-spacing: 2px;
+    }
+
+    .sidebar-brand img {
+        max-width: 130px;
+        max-height: 65px;
+    }
+
+    .sidebar-label {
+        display: none;
+    }
+
+    .sidebar-nav {
+        flex-direction: row;
+    }
+
+    .sidebar-link {
+        white-space: nowrap;
+    }
+
+    .main {
+        width: 100%;
+    }
+
+    .content {
+        padding: 20px;
+    }
+
+    .topbar {
+        padding: 0 20px;
+    }
+}
+
+@media (max-width: 520px) {
+    .content {
+        padding: 16px;
+    }
+
+    .page-heading h1 {
+        font-size: 32px;
+    }
+
+    .page-heading {
+        align-items: stretch;
+    }
+
+    .heading-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .heading-actions .btn {
+        flex: 1;
+    }
+
+    .sidebar-link {
+        padding: 10px 12px;
+    }
+
+    .sidebar-link > span {
+        font-size: 16px;
+    }
+
+    .modal-overlay {
+        padding: 8px;
+    }
+
+    .modal {
+        max-height: 96vh;
+    }
+
+    th,
+    td {
+        padding: 10px;
+    }
+}
+
+
+/* ==========================================================
+   EDUARDO'S BARBERSHOP
+   TARJETAS NEGRAS - SERVICIOS, BARBEROS Y CLIENTES
+========================================================== */
+
+/* TARJETAS PRINCIPALES */
+
+.customers-grid .unified-card,
+.barbers-grid .unified-card,
+#servicesGrid .unified-card,
+.customers-grid .customer-card,
+.barbers-grid .barber-card,
+#servicesGrid .service-card,
+.customer-modal .modal,
+.barber-modern-modal,
+.unified-modal {
+    background: #000000 !important;
+    color: #ffffff !important;
+    border-color: #353535 !important;
+}
+
+/* INTERIOR DE LAS TARJETAS */
+
+.customers-grid .unified-card *,
+.barbers-grid .unified-card *,
+#servicesGrid .unified-card *,
+.customers-grid .customer-card *,
+.barbers-grid .barber-card *,
+#servicesGrid .service-card * {
+    --surface: #000000;
+    --surface-secondary: #000000;
+}
+
+/* SECCIONES INTERIORES */
+
+.customers-grid .unified-card-body,
+.barbers-grid .unified-card-body,
+#servicesGrid .unified-card-body,
+.customers-grid .customer-card-body,
+.barbers-grid .barber-card-body,
+#servicesGrid .service-card-body,
+.customers-grid .unified-card-footer,
+.barbers-grid .unified-card-footer,
+#servicesGrid .unified-card-footer {
+    background: #000000 !important;
+    color: #ffffff !important;
+}
+
+/* CAJAS DE INFORMACIÓN Y ESTADÍSTICAS */
+
+.customers-grid .module-summary-item,
+.barbers-grid .module-summary-item,
+#servicesGrid .module-summary-item,
+.customers-grid .customer-stat,
+.barbers-grid .barber-stat,
+#servicesGrid .service-stat,
+.customers-grid .unified-card-stat,
+.barbers-grid .unified-card-stat,
+#servicesGrid .unified-card-stat,
+.customers-grid .unified-card-metric,
+.barbers-grid .unified-card-metric,
+#servicesGrid .unified-card-metric {
+    background: #000000 !important;
+    border-color: #303030 !important;
+    color: #ffffff !important;
+}
+
+/* NÚMEROS EN BLANCO */
+
+#customerStats strong,
+#customerStats .stat-value,
+#barberSummary strong,
+#barberSummary .module-summary-item strong,
+#serviceSummary strong,
+#serviceSummary .module-summary-item strong,
+.customers-grid .customer-stat strong,
+.barbers-grid .barber-stat strong,
+#servicesGrid .service-stat strong,
+.customers-grid .unified-card-stat strong,
+.barbers-grid .unified-card-stat strong,
+#servicesGrid .unified-card-stat strong,
+.customers-grid .unified-card-metric strong,
+.barbers-grid .unified-card-metric strong,
+#servicesGrid .unified-card-metric strong {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    opacity: 1 !important;
+}
+
+/* FONDOS DE LAS TARJETAS RESUMEN */
+
+#customerStats .stat-card,
+#barberSummary .module-summary-item,
+#serviceSummary .module-summary-item,
+#customerStats .stat,
+#barberSummary,
+#serviceSummary {
+    background: #000000 !important;
+    border-color: #303030 !important;
+}
+
+/* TÍTULOS DORADOS */
+
+.customers-grid h3,
+.barbers-grid h3,
+#servicesGrid h3,
+.customers-grid .unified-card-title h3,
+.barbers-grid .unified-card-title h3,
+#servicesGrid .unified-card-title h3 {
+    color: #d7a65c !important;
+}
+
+/* TEXTOS SECUNDARIOS */
+
+.customers-grid p,
+.barbers-grid p,
+#servicesGrid p,
+.customers-grid small,
+.barbers-grid small,
+#servicesGrid small,
+.customers-grid .unified-card-title span,
+.barbers-grid .unified-card-title span,
+#servicesGrid .unified-card-title span {
+    color: #bcbcbc;
+}
+
+/* EFECTO HOVER PREMIUM */
+
+.customers-grid .unified-card:hover,
+.barbers-grid .unified-card:hover,
+#servicesGrid .unified-card:hover,
+.customers-grid .customer-card:hover,
+.barbers-grid .barber-card:hover,
+#servicesGrid .service-card:hover {
+    border-color: #d7a65c !important;
+    box-shadow: 0 8px 25px rgba(215, 166, 92, 0.12);
+}
+
+/* MÓVILES */
+
+@media (max-width: 800px) {
+    #customerStats strong,
+    #barberSummary strong,
+    #serviceSummary strong {
+        color: #ffffff !important;
+    }
+}
+
+
+/* ==============================================
+   EDUARDO'S BARBERSHOP
+   RECUADROS INTERNOS NEGROS
+   CLIENTES, BARBEROS Y SERVICIOS
+============================================== */
+
+/* Recuadros interiores de las tarjetas */
+
+.customers-grid .unified-card-metric,
+.customers-grid .customer-card-stat,
+.customers-grid .customer-metric,
+.customers-grid .customer-info-box,
+.customers-grid .unified-card-data,
+
+.barbers-grid .unified-card-metric,
+.barbers-grid .barber-card-stat,
+.barbers-grid .barber-metric,
+.barbers-grid .unified-card-data,
+
+#servicesGrid .unified-card-metric,
+#servicesGrid .service-card-stat,
+#servicesGrid .service-metric,
+#servicesGrid .unified-card-data {
+    background: #000000 !important;
+    color: #ffffff !important;
+    border: 1px solid #353535 !important;
+}
+
+/* Etiquetas: Visitas, Última cita, etc. */
+
+.customers-grid .unified-card-metric span,
+.customers-grid .customer-card-stat span,
+.customers-grid .customer-metric span,
+.customers-grid .customer-info-box span,
+.customers-grid .unified-card-data span,
+
+.barbers-grid .unified-card-metric span,
+.barbers-grid .barber-card-stat span,
+.barbers-grid .barber-metric span,
+.barbers-grid .unified-card-data span,
+
+#servicesGrid .unified-card-metric span,
+#servicesGrid .service-card-stat span,
+#servicesGrid .service-metric span,
+#servicesGrid .unified-card-data span {
+    color: #a7a7a7 !important;
+}
+
+/* Números, fechas y valores */
+
+.customers-grid .unified-card-metric strong,
+.customers-grid .customer-card-stat strong,
+.customers-grid .customer-metric strong,
+.customers-grid .customer-info-box strong,
+.customers-grid .unified-card-data strong,
+
+.barbers-grid .unified-card-metric strong,
+.barbers-grid .barber-card-stat strong,
+.barbers-grid .barber-metric strong,
+.barbers-grid .unified-card-data strong,
+
+#servicesGrid .unified-card-metric strong,
+#servicesGrid .service-card-stat strong,
+#servicesGrid .service-metric strong,
+#servicesGrid .unified-card-data strong {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    font-weight: 800 !important;
+    opacity: 1 !important;
+}
+
+/* =====================================================
+   EDUARDO'S BARBERSHOP
+   CORRECCIÓN DEFINITIVA DE RECUADROS INTERIORES
+   CLIENTES + BARBEROS + SERVICIOS
+===================================================== */
+
+/* 1. CLIENTES */
+
+#customersGrid .unified-card-metrics > div,
+#customersGrid .customer-card-metrics > div,
+#customersGrid .customer-metrics > div,
+#customersGrid .customer-card-stats > div {
+    background: #000000 !important;
+    border: 1px solid #353535 !important;
+    color: #ffffff !important;
+}
+
+/* 2. BARBEROS */
+
+#barbersGrid .modern-barber-metrics > div,
+#barbersGrid .modern-barber-schedule,
+#barbersGrid .modern-barber-services {
+    background: #000000 !important;
+    border: 1px solid #353535 !important;
+    color: #ffffff !important;
+}
+
+/* 3. SERVICIOS */
+
+#servicesGrid .unified-card-metrics > div,
+#servicesGrid .unified-card-detail {
+    background: #000000 !important;
+    border: 1px solid #353535 !important;
+    color: #ffffff !important;
+}
+
+/* 4. NÚMEROS Y VALORES BLANCOS */
+
+#customersGrid .unified-card-metrics strong,
+#customersGrid .customer-card-metrics strong,
+#customersGrid .customer-metrics strong,
+#customersGrid .customer-card-stats strong,
+
+#barbersGrid .modern-barber-metrics strong,
+#barbersGrid .modern-barber-schedule strong,
+
+#servicesGrid .unified-card-metrics strong,
+#servicesGrid .unified-card-detail strong,
+#servicesGrid .unified-card-detail small {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    opacity: 1 !important;
+    font-weight: 800 !important;
+}
+
+/* 5. ETIQUETAS GRISES */
+
+#customersGrid .unified-card-metrics span,
+#customersGrid .customer-card-metrics span,
+#customersGrid .customer-metrics span,
+#customersGrid .customer-card-stats span,
+
+#barbersGrid .modern-barber-metrics span,
+#barbersGrid .modern-barber-schedule > span,
+
+#servicesGrid .unified-card-metrics span,
+#servicesGrid .unified-card-detail > span {
+    color: #aaaaaa !important;
+    -webkit-text-fill-color: #aaaaaa !important;
+    opacity: 1 !important;
+}
+
+/* 6. SEPARACIÓN Y BORDES SUAVES */
+
+#barbersGrid .modern-barber-metrics > div,
+#servicesGrid .unified-card-metrics > div,
+#customersGrid .unified-card-metrics > div {
+    border-radius: 9px;
+}
+
+/* 7. CONSERVAR EL DORADO DE LOS TÍTULOS */
+
+#customersGrid h3,
+#barbersGrid h3,
+#servicesGrid h3 {
+    color: #d7a65c !important;
+}
+
+/* =====================================================
+   EDUARDO'S BARBERSHOP
+   TARJETAS UNIFICADAS - ESTILO CLIENTES
+===================================================== */
+
+/* Tarjeta exterior */
+#barbersGrid .modern-barber-card,
+#servicesGrid .unified-card {
+    background: #000 !important;
+    border: 1px solid #353535 !important;
+    border-radius: 13px !important;
+    padding: 20px !important;
+    color: #fff !important;
+    box-shadow: none !important;
+}
+
+/* Nombres dorados */
+#barbersGrid .modern-barber-name h3,
+#servicesGrid .unified-card-title h3 {
+    color: #d7a65c !important;
+}
+
+/* Dos recuadros interiores por tarjeta */
+#barbersGrid .modern-barber-metrics,
+#servicesGrid .unified-card-metrics {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px !important;
+    margin: 18px 0 14px !important;
+    background: transparent !important;
+    border: none !important;
+}
+
+/* Diseño idéntico para las métricas */
+#barbersGrid .modern-barber-metrics > div,
+#servicesGrid .unified-card-metrics > div {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: center !important;
+    gap: 6px !important;
+
+    min-width: 0;
+    min-height: 58px;
+    padding: 11px 12px !important;
+
+    background: #000 !important;
+    border: 1px solid #353535 !important;
+    border-radius: 9px !important;
+    box-shadow: none !important;
+}
+
+/* Etiquetas arriba */
+#barbersGrid .modern-barber-metrics > div span,
+#servicesGrid .unified-card-metrics > div span {
+    order: 0;
+    color: #aaa !important;
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    line-height: 1.3;
+}
+
+/* Valores abajo */
+#barbersGrid .modern-barber-metrics > div strong,
+#servicesGrid .unified-card-metrics > div strong {
+    order: 1;
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+    font-size: 16px !important;
+    font-weight: 800 !important;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+}
+
+/* Información adicional */
+#barbersGrid .modern-barber-schedule,
+#servicesGrid .unified-card-detail {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 7px !important;
+
+    padding: 12px !important;
+    margin-bottom: 12px !important;
+
+    background: #000 !important;
+    border: 1px solid #353535 !important;
+    border-radius: 9px !important;
+}
+
+/* Etiquetas adicionales */
+#barbersGrid .modern-barber-schedule > span,
+#servicesGrid .unified-card-detail > span {
+    color: #aaa !important;
+    font-size: 11px !important;
+}
+
+/* Valores adicionales */
+#barbersGrid .modern-barber-schedule > strong,
+#servicesGrid .unified-card-detail > strong {
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
+    font-size: 15px !important;
+    font-weight: 800 !important;
+}
+
+/* Texto complementario */
+#servicesGrid .unified-card-detail > small {
+    color: #bcbcbc !important;
+}
+
+/* Servicios que ofrece cada barbero */
+#barbersGrid .modern-barber-services {
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+}
+
+/* Pie de tarjeta */
+#barbersGrid .modern-barber-footer,
+#servicesGrid .unified-card-footer {
+    background: transparent !important;
+    border-top: 1px solid #252525 !important;
+    padding-top: 13px !important;
+}
+
+/* Resaltado dorado al pasar el cursor */
+#barbersGrid .modern-barber-card:hover,
+#servicesGrid .unified-card:hover {
+    border-color: #d7a65c !important;
+}
+
+/* Adaptación móvil */
+@media (max-width: 520px) {
+    #barbersGrid .modern-barber-card,
+    #servicesGrid .unified-card {
+        padding: 16px !important;
+    }
+
+    #barbersGrid .modern-barber-metrics,
+    #servicesGrid .unified-card-metrics {
+        gap: 8px !important;
+    }
+}
+
+/* ==========================================================
+   EDUARDO'S BARBERSHOP
+   FORMULARIOS FLOTANTES - TEMA NEGRO Y DORADO
+========================================================== */
+
+/* FONDO OSCURO DETRÁS DEL FORMULARIO */
+
+.modal-overlay {
+    background: rgba(0, 0, 0, 0.82) !important;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+/* CONTENEDOR PRINCIPAL DE TODOS LOS MODALES */
+
+.modal-overlay .modal {
+    background: #090909 !important;
+    color: #ffffff !important;
+    border: 1px solid #8c6838 !important;
+    border-radius: 15px !important;
+    box-shadow: 0 25px 70px rgba(0, 0, 0, 0.7) !important;
+}
+
+/* CABECERAS Y CUERPOS */
+
+.modal-overlay .modal-header,
+.modal-overlay .modal-body,
+.modal-overlay .modal-footer,
+.modal-overlay .barber-modal-hero,
+.modal-overlay .barber-modern-body,
+.modal-overlay .unified-modal-header,
+.modal-overlay .unified-modal-body,
+.modal-overlay .unified-modal-footer,
+.modal-overlay .customer-modal-header,
+.modal-overlay .customer-modal-body,
+.modal-overlay .customer-modal-footer {
+    background: #090909 !important;
+    color: #ffffff !important;
+    border-color: #303030 !important;
+}
+
+/* SECCIONES INTERNAS */
+
+.modal-overlay .barber-config-section,
+.modal-overlay .unified-config-section,
+.modal-overlay .customer-detail-section,
+.modal-overlay .customer-info-section,
+.modal-overlay .form-section,
+.modal-overlay .config-section,
+.modal-overlay .appointment-section,
+.modal-overlay .modal-section {
+    background: #101010 !important;
+    color: #ffffff !important;
+    border: 1px solid #303030 !important;
+    border-radius: 10px !important;
+}
+
+/* TÍTULOS */
+
+.modal-overlay h2,
+.modal-overlay h3,
+.modal-overlay .config-eyebrow,
+.modal-overlay .unified-section-heading h3,
+.modal-overlay .barber-config-title h3 {
+    color: #d7a65c !important;
+}
+
+/* TEXTOS Y ETIQUETAS */
+
+.modal-overlay label,
+.modal-overlay .field label,
+.modal-overlay .form-group label {
+    color: #dedede !important;
+}
+
+.modal-overlay p,
+.modal-overlay small,
+.modal-overlay .field-description,
+.modal-overlay .form-hint {
+    color: #b8b8b8 !important;
+}
+
+/* CAMPOS DE TEXTO, SELECTORES Y FECHAS */
+
+.modal-overlay input:not([type="checkbox"]):not([type="radio"]),
+.modal-overlay select,
+.modal-overlay textarea {
+    background: #111111 !important;
+    color: #ffffff !important;
+    border: 1px solid #3a3a3a !important;
+    border-radius: 9px !important;
+    box-shadow: none !important;
+    color-scheme: dark;
+}
+
+/* PLACEHOLDERS */
+
+.modal-overlay input::placeholder,
+.modal-overlay textarea::placeholder {
+    color: #777777 !important;
+    opacity: 1;
+}
+
+/* CAMPOS ACTIVOS */
+
+.modal-overlay input:focus,
+.modal-overlay select:focus,
+.modal-overlay textarea:focus {
+    background: #151515 !important;
+    border-color: #d7a65c !important;
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(215, 166, 92, 0.13) !important;
+}
+
+/* OPCIONES DE LOS SELECTORES */
+
+.modal-overlay select option {
+    background: #111111;
+    color: #ffffff;
+}
+
+/* CONTENEDORES DE INFORMACIÓN */
+
+.modal-overlay .info-card,
+.modal-overlay .detail-card,
+.modal-overlay .customer-detail-item,
+.modal-overlay .unified-detail-item,
+.modal-overlay .barber-detail-item,
+.modal-overlay .summary-item,
+.modal-overlay .form-card {
+    background: #111111 !important;
+    color: #ffffff !important;
+    border: 1px solid #353535 !important;
+}
+
+/* NÚMEROS Y VALORES */
+
+.modal-overlay .info-card strong,
+.modal-overlay .detail-card strong,
+.modal-overlay .customer-detail-item strong,
+.modal-overlay .unified-detail-item strong,
+.modal-overlay .barber-detail-item strong,
+.modal-overlay .summary-item strong {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+
+/* SELECTORES DE HORARIOS */
+
+.modal-overlay .time-slot,
+.modal-overlay .time-button,
+.modal-overlay .time-option {
+    background: #111111 !important;
+    color: #ffffff !important;
+    border: 1px solid #3a3a3a !important;
+}
+
+.modal-overlay .time-slot.selected,
+.modal-overlay .time-button.selected,
+.modal-overlay .time-option.selected {
+    background: #d7a65c !important;
+    color: #080808 !important;
+    border-color: #d7a65c !important;
+}
+
+/* BOTONES SECUNDARIOS */
+
+.modal-overlay .btn-outline,
+.modal-overlay .btn-secondary {
+    background: #171717 !important;
+    color: #d7a65c !important;
+    border: 1px solid #8c6838 !important;
+}
+
+/* BOTONES PRINCIPALES */
+
+.modal-overlay .btn-dark,
+.modal-overlay .btn-primary {
+    background: linear-gradient(
+        135deg,
+        #f0c987,
+        #c99750
+    ) !important;
+
+    color: #080808 !important;
+    border: 1px solid #d7a65c !important;
+    font-weight: 800 !important;
+}
+
+/* BOTÓN DE CERRAR */
+
+.modal-overlay .modal-close {
+    background: #171717 !important;
+    color: #d7a65c !important;
+    border: 1px solid #353535 !important;
+}
+
+/* SEPARADORES */
+
+.modal-overlay hr {
+    border: none;
+    border-top: 1px solid #303030;
+}
+
+/* TABLAS DENTRO DE MODALES */
+
+.modal-overlay table,
+.modal-overlay thead,
+.modal-overlay tbody,
+.modal-overlay tr,
+.modal-overlay td,
+.modal-overlay th {
+    background: #101010 !important;
+    color: #ffffff !important;
+    border-color: #303030 !important;
+}
+
+/* RESPONSIVE */
+
+@media (max-width: 520px) {
+    .modal-overlay .modal {
+        max-height: 96vh;
+        overflow-y: auto;
+    }
+
+    .modal-overlay .modal-header,
+    .modal-overlay .modal-body,
+    .modal-overlay .modal-footer {
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+}
+
+/* =====================================================
+   EDUARDO'S BARBERSHOP
+   CORRECCIÓN DE MODALES: BARBEROS Y SERVICIOS
+===================================================== */
+
+/* BASE DE LOS DOS FORMULARIOS */
+
+.modal-overlay .barber-modern-modal,
+.modal-overlay .unified-modal {
+    background: #090909 !important;
+    color: #ffffff !important;
+}
+
+/* CABECERAS, CUERPOS Y PIE */
+
+.modal-overlay .barber-modal-hero,
+.modal-overlay .barber-modern-body,
+.modal-overlay .unified-modal-header,
+.modal-overlay .unified-modal-body,
+.modal-overlay .unified-modal-footer {
+    background: #090909 !important;
+    color: #ffffff !important;
+    border-color: #303030 !important;
+}
+
+/* SECCIONES DEL FORMULARIO */
+
+.modal-overlay .barber-config-section,
+.modal-overlay .unified-config-section {
+    background: #101010 !important;
+    color: #ffffff !important;
+    border-color: #303030 !important;
+}
+
+/* FILA DE ACTIVACIÓN DE SERVICIOS */
+
+.modal-overlay .unified-active-row {
+    background: #171717 !important;
+    color: #ffffff !important;
+    border: 1px solid #353535 !important;
+}
+
+.modal-overlay .unified-active-row strong {
+    color: #ffffff !important;
+}
+
+.modal-overlay .unified-active-row p {
+    color: #aaaaaa !important;
+}
+
+/* SERVICIOS QUE REALIZA CADA BARBERO */
+
+.modal-overlay #barberServices,
+.modal-overlay #barberServices label,
+.modal-overlay #barberServices > div {
+    background: #141414 !important;
+    color: #ffffff !important;
+    border-color: #353535 !important;
+}
+
+/* EDITOR DE HORARIOS */
+
+.modal-overlay #scheduleEditor,
+.modal-overlay .modern-schedule-row,
+.modal-overlay .modern-schedule-times,
+.modal-overlay .modern-schedule-day {
+    background: #141414 !important;
+    color: #ffffff !important;
+    border-color: #353535 !important;
+}
+
+.modal-overlay .modern-schedule-row {
+    border: 1px solid #353535 !important;
+    border-radius: 10px;
+}
+
+/* HORAS Y CAMPOS */
+
+.modal-overlay .modern-schedule-times input,
+.modal-overlay .schedule-start,
+.modal-overlay .schedule-end,
+.modal-overlay .service-form-grid input,
+.modal-overlay .service-form-grid select {
+    background: #090909 !important;
+    color: #ffffff !important;
+    border: 1px solid #404040 !important;
+    color-scheme: dark;
+}
+
+/* ETIQUETAS */
+
+.modal-overlay .modern-schedule-row label,
+.modal-overlay .modern-schedule-row span,
+.modal-overlay .service-form-grid label {
+    color: #dedede !important;
+}
+
+/* TÍTULOS */
+
+.modal-overlay .barber-config-title h3,
+.modal-overlay .unified-section-heading h3 {
+    color: #d7a65c !important;
+}
+
+/* INTERRUPTORES Y CHECKBOXES */
+
+.modal-overlay input[type="checkbox"] {
+    accent-color: #d7a65c;
+}
+
+/* AVATARES */
+
+.modal-overlay .barber-modal-avatar,
+.modal-overlay .unified-modal-avatar {
+    background: #302315 !important;
+    color: #d7a65c !important;
+    border: 1px solid #8c6838 !important;
+}
+
+/* BORDES Y SEPARADORES */
+
+.modal-overlay .barber-config-section + .barber-config-section,
+.modal-overlay .unified-config-section + .unified-config-section {
+    border-top: 1px solid #303030 !important;
+}
+
+/* =====================================================
+   EDUARDO'S BARBERSHOP
+   ACTIVAR / DESACTIVAR BARBEROS
+===================================================== */
+
+/* Contenedor de activación */
+.barber-modern-modal .barber-active-row,
+.barber-modern-modal .barber-status-row,
+.barber-modern-modal .barber-active-control,
+.barber-modern-modal .barber-availability-row,
+.barber-modern-modal .barber-switch-row,
+.barber-modern-modal .barber-config-switch,
+.barber-modern-modal .barber-config-section:has(#barberActiveSwitch) {
+    background: #111111 !important;
+    color: #ffffff !important;
+    border-color: #353535 !important;
+}
+
+/* Texto del estado */
+.barber-modern-modal .barber-active-row strong,
+.barber-modern-modal .barber-status-row strong,
+.barber-modern-modal .barber-switch-row strong,
+.barber-modern-modal .barber-config-section:has(#barberActiveSwitch) strong {
+    color: #ffffff !important;
+}
+
+/* Descripciones */
+.barber-modern-modal .barber-active-row p,
+.barber-modern-modal .barber-status-row p,
+.barber-modern-modal .barber-switch-row p,
+.barber-modern-modal .barber-config-section:has(#barberActiveSwitch) p {
+    color: #aaaaaa !important;
+}
+
+/* Interruptor */
+.barber-modern-modal #barberActiveSwitch {
+    accent-color: #d7a65c;
+}
