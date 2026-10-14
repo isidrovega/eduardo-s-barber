@@ -1,48 +1,20 @@
-
-/* =========================================================
-   EDUARDO'S BARBERSHOP
-   BARBERS.JS
-   FIRESTORE + COMISIONES + CUENTAS DE ACCESO
-========================================================= */
+import {
+    services
+} from "./data.js";
 
 import {
-    getBarbers,
-    getServices,
     getAppointments,
-    saveBarber,
     generateId
-} from "./firestore-storage.js";
+} from "./storage.js";
 
-import {
-    createBarberAccount
-} from "./barber-accounts.js";
 
-import {
-    auth,
-    db
-} from "./firebase.js";
+const STORAGE_KEY =
+    "barbershop_barbers";
 
-import {
-    collection,
-    getDocs,
-    query,
-    where
-} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 
-/* =========================================================
-   ESTADO
-========================================================= */
+let editingBarberId =
+    null;
 
-let barbers = [];
-let services = [];
-let appointments = [];
-
-let editingBarberId = null;
-let saving = false;
-let creatingAccount = false;
-let toastTimer = null;
-
-const accountStatusByBarber = new Map();
 
 const dayLabels = {
     monday: "Lunes",
@@ -54,37 +26,44 @@ const dayLabels = {
     sunday: "Domingo"
 };
 
+
 const defaultSchedule = {
     monday: {
         enabled: true,
         start: "09:00",
         end: "19:00"
     },
+
     tuesday: {
         enabled: true,
         start: "09:00",
         end: "19:00"
     },
+
     wednesday: {
         enabled: true,
         start: "09:00",
         end: "19:00"
     },
+
     thursday: {
         enabled: true,
         start: "09:00",
         end: "19:00"
     },
+
     friday: {
         enabled: true,
         start: "09:00",
         end: "19:00"
     },
+
     saturday: {
         enabled: true,
         start: "09:00",
         end: "17:00"
     },
+
     sunday: {
         enabled: false,
         start: "09:00",
@@ -92,1296 +71,1608 @@ const defaultSchedule = {
     }
 };
 
-/* =========================================================
-   ELEMENTOS
-========================================================= */
 
-const $ = id => document.getElementById(id);
+/* =====================================================
+   ELEMENTS
+===================================================== */
 
-const barbersGrid = $("barbersGrid");
-const barberSummary = $("barberSummary");
-const barberModal = $("barberModal");
+const barbersGrid =
+    document.getElementById(
+        "barbersGrid"
+    );
 
-const barberName = $("barberName");
-const barberPhone = $("barberPhone");
-const barberActiveSwitch = $("barberActiveSwitch");
 
-const barberServices = $("barberServices");
-const scheduleEditor = $("scheduleEditor");
+const barberSummary =
+    document.getElementById(
+        "barberSummary"
+    );
 
-const barberModalAvatar = $("barberModalAvatar");
-const barberModalTitle = $("barberModalTitle");
 
-const barberCommission = $("barberCommission");
-const commissionPreview = $("commissionPreview");
+const barberModal =
+    document.getElementById(
+        "barberModal"
+    );
 
-const saveBarberButton = $("saveBarberButton");
 
-const barberAccountEmail = $("barberAccountEmail");
-const barberAccountPassword = $("barberAccountPassword");
-const createBarberAccountButton = $(
-    "createBarberAccountButton"
-);
-const barberAccountMessage = $("barberAccountMessage");
+const barberName =
+    document.getElementById(
+        "barberName"
+    );
 
-const requiredElements = [
-    barbersGrid,
-    barberSummary,
-    barberModal,
-    barberName,
-    barberPhone,
-    barberActiveSwitch,
-    barberServices,
-    scheduleEditor,
-    barberModalAvatar,
-    barberModalTitle,
-    barberCommission,
-    commissionPreview,
-    saveBarberButton,
-    barberAccountEmail,
-    barberAccountPassword,
-    createBarberAccountButton,
-    barberAccountMessage
-];
 
-/* =========================================================
-   INICIALIZACIÓN
-========================================================= */
+const barberPhone =
+    document.getElementById(
+        "barberPhone"
+    );
 
-async function initialize() {
-    if (requiredElements.some(element => !element)) {
-        console.error(
-            "Faltan elementos del formulario en barberos.html."
-        );
+
+const barberActiveSwitch =
+    document.getElementById(
+        "barberActiveSwitch"
+    );
+
+
+const barberServices =
+    document.getElementById(
+        "barberServices"
+    );
+
+
+const scheduleEditor =
+    document.getElementById(
+        "scheduleEditor"
+    );
+
+
+const barberModalAvatar =
+    document.getElementById(
+        "barberModalAvatar"
+    );
+
+
+/* =====================================================
+   START
+===================================================== */
+
+
+function initialize() {
+    configureEvents();
+    renderSummary();
+    renderBarbers();
+}
+
+
+
+/* =====================================================
+   STORAGE
+===================================================== */
+
+function getBarbers() {
+
+    try {
+
+        const stored =
+            JSON.parse(
+                localStorage.getItem(
+                    STORAGE_KEY
+                )
+            );
+
+
+        return Array.isArray(
+            stored
+        )
+            ? stored
+            : [];
+
+    } catch {
+
+        return [];
+
+    }
+
+}
+
+
+function saveBarbers(barbers) {
+
+    localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(
+            barbers
+        )
+    );
+
+}
+
+
+/* =====================================================
+   SEED
+===================================================== */
+
+function seedBarbers() {
+
+    if (
+        localStorage.getItem(
+            STORAGE_KEY
+        )
+    ) {
         return;
     }
 
-    configureEvents();
 
-    barberSummary.innerHTML = "";
+    const barbers = [
 
-    barbersGrid.innerHTML = `
-        <div class="empty-state">
-            <span class="empty-state-icon">✂</span>
-            <h3>Cargando barberos...</h3>
-            <p>Consultando Firebase.</p>
-        </div>
-    `;
+        {
+            id: "carlos",
 
-    await loadData();
+            name: "Carlos",
+
+            phone: "667 111 1001",
+
+            status: "active",
+
+            serviceIds: [
+                "cut",
+                "cut-beard",
+                "beard"
+            ],
+
+            schedule:
+                createSchedule({
+                    saturday: {
+                        enabled: true,
+                        start: "09:00",
+                        end: "17:00"
+                    },
+
+                    sunday: {
+                        enabled: false,
+                        start: "09:00",
+                        end: "17:00"
+                    }
+                })
+        },
+
+        {
+            id: "miguel",
+
+            name: "Miguel",
+
+            phone: "667 111 1002",
+
+            status: "active",
+
+            serviceIds: [
+                "cut",
+                "cut-beard",
+                "beard"
+            ],
+
+            schedule:
+                createSchedule({
+                    monday: {
+                        enabled: false,
+                        start: "10:00",
+                        end: "20:00"
+                    },
+
+                    tuesday: {
+                        enabled: true,
+                        start: "10:00",
+                        end: "20:00"
+                    },
+
+                    wednesday: {
+                        enabled: true,
+                        start: "10:00",
+                        end: "20:00"
+                    },
+
+                    thursday: {
+                        enabled: true,
+                        start: "10:00",
+                        end: "20:00"
+                    },
+
+                    friday: {
+                        enabled: true,
+                        start: "10:00",
+                        end: "20:00"
+                    },
+
+                    saturday: {
+                        enabled: true,
+                        start: "10:00",
+                        end: "20:00"
+                    },
+
+                    sunday: {
+                        enabled: true,
+                        start: "10:00",
+                        end: "18:00"
+                    }
+                })
+        },
+
+        {
+            id: "alex",
+
+            name: "Alex",
+
+            phone: "667 111 1003",
+
+            status: "active",
+
+            serviceIds: [
+                "cut",
+                "cut-beard"
+            ],
+
+            schedule:
+                createSchedule({
+                    monday: {
+                        enabled: true,
+                        start: "11:00",
+                        end: "19:00"
+                    },
+
+                    tuesday: {
+                        enabled: true,
+                        start: "11:00",
+                        end: "19:00"
+                    },
+
+                    wednesday: {
+                        enabled: true,
+                        start: "11:00",
+                        end: "19:00"
+                    },
+
+                    thursday: {
+                        enabled: true,
+                        start: "11:00",
+                        end: "19:00"
+                    },
+
+                    friday: {
+                        enabled: true,
+                        start: "11:00",
+                        end: "19:00"
+                    },
+
+                    saturday: {
+                        enabled: false,
+                        start: "11:00",
+                        end: "19:00"
+                    },
+
+                    sunday: {
+                        enabled: false,
+                        start: "11:00",
+                        end: "19:00"
+                    }
+                })
+        }
+
+    ];
+
+
+    saveBarbers(
+        barbers
+    );
+
 }
 
-/* =========================================================
-   FIRESTORE
-========================================================= */
 
-async function loadData() {
-    try {
-        const [
-            barbersData,
-            servicesData,
-            appointmentsData
-        ] = await Promise.all([
-            getBarbers(),
-            getServices(),
-            getAppointments()
-        ]);
+function createSchedule(
+    overrides = {}
+) {
 
-        barbers = barbersData;
-        services = servicesData;
-        appointments = appointmentsData;
+    return {
+        ...structuredClone(
+            defaultSchedule
+        ),
+        ...structuredClone(
+            overrides
+        )
+    };
 
-        renderSummary();
-        renderBarbers();
-
-    } catch (error) {
-        console.error(
-            "Error cargando barberos:",
-            error
-        );
-
-        barbersGrid.innerHTML = `
-            <div class="empty-state">
-                <span class="empty-state-icon">!</span>
-                <h3>No se pudieron cargar los barberos</h3>
-                <p>
-                    Verifica tu sesión y los permisos
-                    de Firebase.
-                </p>
-            </div>
-        `;
-
-        showToast(
-            "No se pudo conectar con Firebase.",
-            "error"
-        );
-    }
 }
 
-/* =========================================================
-   EVENTOS
-========================================================= */
+
+/* =====================================================
+   EVENTS
+===================================================== */
 
 function configureEvents() {
-    $("newBarberButton").addEventListener(
-        "click",
-        openNewBarber
-    );
 
-    $("closeBarberModal").addEventListener(
-        "click",
-        closeModal
-    );
+    document
+        .getElementById(
+            "newBarberButton"
+        )
+        .addEventListener(
+            "click",
+            openNewBarber
+        );
 
-    $("cancelBarberButton").addEventListener(
-        "click",
-        closeModal
-    );
 
-    saveBarberButton.addEventListener(
-        "click",
-        handleSaveBarber
-    );
+    document
+        .getElementById(
+            "closeBarberModal"
+        )
+        .addEventListener(
+            "click",
+            closeModal
+        );
 
-    createBarberAccountButton.addEventListener(
-        "click",
-        handleCreateBarberAccount
-    );
 
-    barberCommission.addEventListener(
-        "input",
-        updateCommissionPreview
-    );
+    document
+        .getElementById(
+            "cancelBarberButton"
+        )
+        .addEventListener(
+            "click",
+            closeModal
+        );
 
-    barberName.addEventListener(
-        "input",
-        updateModalAvatar
-    );
 
-    barberActiveSwitch.addEventListener(
-        "change",
-        updateAccountButton
-    );
+    document
+        .getElementById(
+            "saveBarberButton"
+        )
+        .addEventListener(
+            "click",
+            saveBarber
+        );
 
-    barberAccountEmail.addEventListener(
-        "input",
-        updateAccountButton
-    );
-
-    barberAccountPassword.addEventListener(
-        "input",
-        updateAccountButton
-    );
 
     barbersGrid.addEventListener(
         "click",
         handleGridAction
     );
 
+
     scheduleEditor.addEventListener(
         "change",
         event => {
+
             if (
                 event.target.matches(
                     ".schedule-enabled"
                 )
             ) {
-                updateScheduleState(event.target);
+
+                updateScheduleState(
+                    event.target
+                );
+
             }
+
         }
     );
+
+
+    barberName.addEventListener(
+        "input",
+        updateModalAvatar
+    );
+
 
     barberModal.addEventListener(
         "click",
         event => {
-            if (event.target === barberModal) {
+
+            if (
+                event.target ===
+                barberModal
+            ) {
+
                 closeModal();
+
             }
+
         }
     );
+
 
     document.addEventListener(
         "keydown",
         event => {
+
             if (
                 event.key === "Escape" &&
-                barberModal.classList.contains("active")
+                !barberModal
+                    .classList
+                    .contains(
+                        "hidden"
+                    )
             ) {
+
                 closeModal();
+
             }
+
         }
     );
+
 }
 
-/* =========================================================
-   RESUMEN
-========================================================= */
+
+/* =====================================================
+   SUMMARY
+===================================================== */
 
 function renderSummary() {
-    const active = barbers.filter(
-        barber => barber.status === "active"
-    );
 
-    const workingToday = active.filter(
-        barber => getTodaySchedule(barber)?.enabled
-    );
+    const barbers =
+        getBarbers();
+
+
+    const active =
+        barbers.filter(
+            barber =>
+                barber.status ===
+                "active"
+        );
+
+
+    const today =
+        active.filter(
+            barber =>
+                getTodaySchedule(
+                    barber
+                )?.enabled
+        );
+
 
     barberSummary.innerHTML = `
-        <div class="barber-summary-item">
-            <strong>${barbers.length}</strong>
-            <span>Barberos</span>
+
+        <div
+            class="
+                barber-summary-item
+            "
+        >
+
+            <strong>
+                ${barbers.length}
+            </strong>
+
+            <span>
+                Barberos
+            </span>
+
         </div>
 
-        <div class="barber-summary-divider"></div>
 
-        <div class="barber-summary-item">
-            <strong>${active.length}</strong>
-            <span>Activos</span>
+        <div
+            class="
+                barber-summary-divider
+            "
+        ></div>
+
+
+        <div
+            class="
+                barber-summary-item
+            "
+        >
+
+            <strong>
+                ${active.length}
+            </strong>
+
+            <span>
+                Activos
+            </span>
+
         </div>
 
-        <div class="barber-summary-divider"></div>
 
-        <div class="barber-summary-item">
-            <strong>${workingToday.length}</strong>
-            <span>Trabajando hoy</span>
+        <div
+            class="
+                barber-summary-divider
+            "
+        ></div>
+
+
+        <div
+            class="
+                barber-summary-item
+            "
+        >
+
+            <strong>
+                ${today.length}
+            </strong>
+
+            <span>
+                Trabajando hoy
+            </span>
+
         </div>
+
     `;
+
 }
 
-/* =========================================================
-   TARJETAS
-========================================================= */
+
+/* =====================================================
+   RENDER BARBERS
+===================================================== */
 
 function renderBarbers() {
+
+    const barbers =
+        getBarbers();
+
+
+    const appointments =
+        getAppointments();
+
+
     if (!barbers.length) {
+
         barbersGrid.innerHTML = `
-            <div class="empty-state">
-                <span class="empty-state-icon">✂</span>
-                <h3>No hay barberos registrados</h3>
-                <p>
-                    Presiona Nuevo barbero para
-                    agregar al primer integrante.
-                </p>
+
+            <div
+                class="panel"
+                style="
+                    grid-column:
+                    1 / -1;
+                "
+            >
+
+                <div class="empty">
+                    No hay barberos registrados.
+                </div>
+
             </div>
+
         `;
+
         return;
+
     }
 
-    barbersGrid.innerHTML = barbers.map(barber => {
-        const appointmentsToday = getAppointmentsToday(
-            barber.id
-        );
 
-        const todaySchedule = getTodaySchedule(barber);
+    barbersGrid.innerHTML =
+        barbers
+            .map(
+                barber => {
 
-        const serviceList = (
-            barber.serviceIds || []
-        ).map(id => {
-            return services.find(
-                service => service.id === id
-            );
-        }).filter(Boolean);
+                    const appointmentsToday =
+                        getAppointmentsToday(
+                            barber.id,
+                            appointments
+                        );
 
-        const active = barber.status === "active";
 
-        const commission = Number(
-            barber.commissionPercent ?? 50
-        );
+                    const todaySchedule =
+                        getTodaySchedule(
+                            barber
+                        );
 
-        return `
-            <article class="modern-barber-card ${
-                active ? "" : "is-inactive"
-            }">
 
-                <div class="modern-barber-top">
+                    const serviceList =
+                        barber.serviceIds
+                            .map(
+                                id =>
+                                    services.find(
+                                        service =>
+                                            service.id ===
+                                            id
+                                    )
+                            )
+                            .filter(
+                                Boolean
+                            );
 
-                    <div class="modern-barber-person">
 
-                        <div class="modern-barber-avatar">
-                            ${escapeHTML(
-                                getInitials(barber.name)
-                            )}
-                        </div>
+                    return `
 
-                        <div class="modern-barber-name">
-                            <h3>
-                                ${escapeHTML(barber.name)}
-                            </h3>
-                            <span>Barbero</span>
-                        </div>
+                        <article
+                            class="
+                                modern-barber-card
+                                ${
+                                    barber.status ===
+                                    "inactive"
+                                        ? "is-inactive"
+                                        : ""
+                                }
+                            "
+                        >
 
-                    </div>
+                            <div
+                                class="
+                                    modern-barber-top
+                                "
+                            >
 
-                    <div class="modern-status ${
-                        active ? "active" : "inactive"
-                    }">
-                        <span></span>
-                        ${active ? "Activo" : "Inactivo"}
-                    </div>
+                                <div
+                                    class="
+                                        modern-barber-person
+                                    "
+                                >
 
-                </div>
+                                    <div
+                                        class="
+                                            modern-barber-avatar
+                                        "
+                                    >
+                                        ${getInitials(
+                                            barber.name
+                                        )}
+                                    </div>
 
-                <div class="modern-barber-metrics">
 
-                    <div>
-                        <strong>${appointmentsToday}</strong>
-                        <span>Citas hoy</span>
-                    </div>
+                                    <div
+                                        class="
+                                            modern-barber-name
+                                        "
+                                    >
 
-                    <div>
-                        <strong>${serviceList.length}</strong>
-                        <span>Servicios</span>
-                    </div>
+                                        <h3>
+                                            ${escapeHTML(
+                                                barber.name
+                                            )}
+                                        </h3>
 
-                    <div>
-                        <strong>${commission}%</strong>
-                        <span>Comisión</span>
-                    </div>
+                                        <span>
+                                            Barbero
+                                        </span>
 
-                </div>
+                                    </div>
 
-                <div class="modern-barber-schedule">
-                    <span>Horario de hoy</span>
+                                </div>
 
-                    <strong>
-                        ${
-                            active
-                                ? formatTodaySchedule(
-                                    todaySchedule
-                                )
-                                : "No disponible"
-                        }
-                    </strong>
-                </div>
 
-                <div class="modern-barber-services">
-                    ${
-                        serviceList.length
-                            ? serviceList.map(service => `
+                                <div
+                                    class="
+                                        modern-status
+                                        ${
+                                            barber.status ===
+                                            "active"
+                                                ? "active"
+                                                : "inactive"
+                                        }
+                                    "
+                                >
+
+                                    <span></span>
+
+                                    ${
+                                        barber.status ===
+                                        "active"
+                                            ? "Activo"
+                                            : "Inactivo"
+                                    }
+
+                                </div>
+
+                            </div>
+
+
+                            <div
+                                class="
+                                    modern-barber-metrics
+                                "
+                            >
+
+                                <div>
+
+                                    <strong>
+                                        ${appointmentsToday}
+                                    </strong>
+
+                                    <span>
+                                        Citas hoy
+                                    </span>
+
+                                </div>
+
+
+                                <div>
+
+                                    <strong>
+                                        ${serviceList.length}
+                                    </strong>
+
+                                    <span>
+                                        Servicios
+                                    </span>
+
+                                </div>
+
+                            </div>
+
+
+                            <div
+                                class="
+                                    modern-barber-schedule
+                                "
+                            >
+
                                 <span>
-                                    ${escapeHTML(service.name)}
+                                    Horario de hoy
                                 </span>
-                            `).join("")
-                            : "<span>Sin servicios</span>"
-                    }
-                </div>
 
-                <div class="modern-barber-footer">
+                                <strong>
 
-                    <span>
-                        ${escapeHTML(
-                            barber.phone || "Sin teléfono"
-                        )}
-                    </span>
+                                    ${
+                                        barber.status ===
+                                        "inactive"
+                                            ?
+                                            "No disponible"
+                                            :
+                                            formatTodaySchedule(
+                                                todaySchedule
+                                            )
+                                    }
 
-                    <button
-                        type="button"
-                        class="modern-edit-button"
-                        data-action="edit"
-                        data-id="${escapeHTML(barber.id)}"
-                    >
-                        Editar <span>→</span>
-                    </button>
+                                </strong>
 
-                </div>
+                            </div>
 
-            </article>
-        `;
-    }).join("");
+
+                            <div
+                                class="
+                                    modern-barber-services
+                                "
+                            >
+
+                                ${
+                                    serviceList.length
+                                        ?
+                                        serviceList
+                                            .map(
+                                                service => `
+                                                    <span>
+                                                        ${service.name}
+                                                    </span>
+                                                `
+                                            )
+                                            .join("")
+                                        :
+                                        `
+                                            <span>
+                                                Sin servicios
+                                            </span>
+                                        `
+                                }
+
+                            </div>
+
+
+                            <div
+                                class="
+                                    modern-barber-footer
+                                "
+                            >
+
+                                <span>
+                                    ${escapeHTML(
+                                        barber.phone ||
+                                        "Sin teléfono"
+                                    )}
+                                </span>
+
+
+                                <button
+                                    type="button"
+                                    class="
+                                        modern-edit-button
+                                    "
+                                    data-action="edit"
+                                    data-id="${barber.id}"
+                                >
+                                    Editar
+                                    <span>
+                                        →
+                                    </span>
+                                </button>
+
+                            </div>
+
+                        </article>
+
+                    `;
+
+                }
+            )
+            .join("");
+
 }
 
-/* =========================================================
-   CITAS DE HOY
-========================================================= */
 
-function getAppointmentsToday(barberId) {
-    const today = getLocalDate();
+/* =====================================================
+   APPOINTMENTS TODAY
+===================================================== */
 
-    return appointments.filter(appointment => {
-        return (
-            appointment.barberId === barberId &&
-            appointment.date === today &&
-            appointment.status !== "cancelled" &&
-            appointment.status !== "no-show"
+function getAppointmentsToday(
+    barberId,
+    appointments
+) {
+
+    const today =
+        getLocalDate();
+
+
+    return appointments.filter(
+        appointment =>
+            appointment.barberId ===
+                barberId &&
+
+            appointment.date ===
+                today &&
+
+            appointment.status !==
+                "cancelled" &&
+
+            appointment.status !==
+                "no-show"
+    ).length;
+
+}
+
+
+/* =====================================================
+   GRID ACTION
+===================================================== */
+
+function handleGridAction(
+    event
+) {
+
+    const button =
+        event.target.closest(
+            "[data-action]"
         );
-    }).length;
-}
 
-/* =========================================================
-   ACCIONES DE TARJETAS
-========================================================= */
-
-function handleGridAction(event) {
-    const button = event.target.closest(
-        "[data-action]"
-    );
 
     if (!button) {
         return;
     }
 
-    if (button.dataset.action === "edit") {
-        openEditBarber(button.dataset.id);
-    }
-}
-
-/* =========================================================
-   NUEVO BARBERO
-========================================================= */
-
-function openNewBarber() {
-    editingBarberId = null;
-
-    barberModalTitle.textContent = "Nuevo barbero";
-
-    barberName.value = "";
-    barberPhone.value = "";
-
-    barberActiveSwitch.checked = true;
-    barberCommission.value = "50";
-
-    barberModalAvatar.textContent = "NB";
-
-    renderServices(
-        services.map(service => service.id)
-    );
-
-    renderSchedule(createSchedule());
-
-    resetAccountForm();
-
-    setAccountMessage(
-        "Primero guarda el barbero. Después edítalo para crear su cuenta."
-    );
-
-    updateCommissionPreview();
-    updateAccountButton();
-
-    openModal();
-}
-
-/* =========================================================
-   EDITAR BARBERO
-========================================================= */
-
-async function openEditBarber(id) {
-    const barber = barbers.find(
-        item => item.id === id
-    );
-
-    if (!barber) {
-        showToast(
-            "No se encontró el barbero.",
-            "error"
-        );
-        return;
-    }
-
-    editingBarberId = barber.id;
-
-    barberModalTitle.textContent = barber.name;
-
-    barberName.value = barber.name;
-    barberPhone.value = barber.phone || "";
-
-    barberActiveSwitch.checked =
-        barber.status === "active";
-
-    barberCommission.value =
-        barber.commissionPercent ?? 50;
-
-    barberModalAvatar.textContent =
-        getInitials(barber.name);
-
-    renderServices(barber.serviceIds || []);
-
-    renderSchedule(
-        createSchedule(barber.schedule || {})
-    );
-
-    resetAccountForm();
-    updateCommissionPreview();
-    updateAccountButton();
-
-    openModal();
-
-    await loadAccountStatus(barber.id);
-}
-
-/* =========================================================
-   MODAL
-========================================================= */
-
-function openModal() {
-    barberModal.classList.remove("hidden");
-    barberModal.classList.add("active");
-
-    barberModal.setAttribute(
-        "aria-hidden",
-        "false"
-    );
-
-    document.body.classList.add("modal-open");
-
-    setTimeout(() => barberName.focus(), 50);
-}
-
-function closeModal() {
-    if (saving || creatingAccount) {
-        return;
-    }
-
-    barberModal.classList.remove("active");
-    barberModal.classList.add("hidden");
-
-    barberModal.setAttribute(
-        "aria-hidden",
-        "true"
-    );
-
-    document.body.classList.remove("modal-open");
-
-    editingBarberId = null;
-}
-
-/* =========================================================
-   AVATAR
-========================================================= */
-
-function updateModalAvatar() {
-    barberModalAvatar.textContent =
-        getInitials(barberName.value) || "NB";
-}
-
-/* =========================================================
-   COMISIONES
-========================================================= */
-
-function updateCommissionPreview() {
-    const percentage = Number(
-        barberCommission.value
-    );
 
     if (
-        barberCommission.value.trim() === "" ||
-        !Number.isFinite(percentage) ||
-        percentage < 0 ||
-        percentage > 100
+        button.dataset.action ===
+        "edit"
     ) {
-        commissionPreview.textContent =
-            "Ingresa un porcentaje entre 0 y 100.";
-        return;
+
+        openEditBarber(
+            button.dataset.id
+        );
+
     }
 
-    const examplePrice = 200;
-
-    const earnings =
-        examplePrice * percentage / 100;
-
-    commissionPreview.textContent =
-        `Ejemplo: de un servicio de $200, ` +
-        `el barbero recibe $${earnings.toFixed(2)}.`;
 }
 
-/* =========================================================
-   SERVICIOS
-========================================================= */
 
-function renderServices(selectedIds = []) {
-    if (!services.length) {
-        barberServices.innerHTML = `
-            <div class="empty-state">
-                <p>
-                    No hay servicios registrados.
-                    Crea primero un servicio.
-                </p>
-            </div>
-        `;
-        return;
-    }
+/* =====================================================
+   NEW BARBER
+===================================================== */
 
-    barberServices.innerHTML = services.map(service => `
-        <label class="modern-service-option">
+function openNewBarber() {
 
-            <input
-                type="checkbox"
-                value="${escapeHTML(service.id)}"
-                ${
-                    selectedIds.includes(service.id)
-                        ? "checked"
-                        : ""
-                }
-            >
+    editingBarberId =
+        null;
 
-            <span class="modern-service-check">✓</span>
 
-            <div>
-                <strong>
-                    ${escapeHTML(service.name)}
-                </strong>
+    document
+        .getElementById(
+            "barberModalTitle"
+        )
+        .textContent =
+        "Nuevo barbero";
 
-                <small>
-                    ${escapeHTML(service.duration)} min ·
-                    $${escapeHTML(service.price)}
-                </small>
-            </div>
 
-        </label>
-    `).join("");
-}
+    barberName.value =
+        "";
 
-/* =========================================================
-   HORARIOS
-========================================================= */
 
-function createSchedule(overrides = {}) {
-    const result = structuredClone(
-        defaultSchedule
+    barberPhone.value =
+        "";
+
+
+    barberActiveSwitch.checked =
+        true;
+
+
+    barberModalAvatar.textContent =
+        "NB";
+
+
+    renderServices(
+        services.map(
+            service =>
+                service.id
+        )
     );
 
-    for (const [day, config] of Object.entries(overrides)) {
-        if (
-            Object.prototype.hasOwnProperty.call(
-                result,
-                day
-            )
-        ) {
-            result[day] = {
-                ...result[day],
-                ...config
-            };
-        }
-    }
 
-    return result;
+    renderSchedule(
+        createSchedule()
+    );
+
+
+    openModal();
+
 }
 
-function renderSchedule(schedule) {
-    scheduleEditor.innerHTML = Object.entries(
-        dayLabels
-    ).map(([day, label]) => {
-        const config =
-            schedule[day] || defaultSchedule[day];
 
-        return `
-            <div
-                class="modern-schedule-row ${
-                    config.enabled ? "" : "disabled"
-                }"
-                data-day="${day}"
-            >
+/* =====================================================
+   EDIT BARBER
+===================================================== */
 
-                <div class="modern-schedule-day">
+function openEditBarber(id) {
 
-                    <label class="modern-switch small">
+    const barber =
+        getBarbers()
+            .find(
+                item =>
+                    item.id === id
+            );
+
+
+    if (!barber) {
+        return;
+    }
+
+
+    editingBarberId =
+        barber.id;
+
+
+    document
+        .getElementById(
+            "barberModalTitle"
+        )
+        .textContent =
+        barber.name;
+
+
+    barberName.value =
+        barber.name;
+
+
+    barberPhone.value =
+        barber.phone || "";
+
+
+    barberActiveSwitch.checked =
+        barber.status ===
+        "active";
+
+
+    barberModalAvatar.textContent =
+        getInitials(
+            barber.name
+        );
+
+
+    renderServices(
+        barber.serviceIds ||
+        []
+    );
+
+
+    renderSchedule(
+        barber.schedule ||
+        createSchedule()
+    );
+
+
+    openModal();
+
+}
+
+
+/* =====================================================
+   MODAL
+===================================================== */
+
+function openModal() {
+
+    barberModal.classList.remove(
+        "hidden"
+    );
+
+
+    document.body.classList.add(
+        "modal-open"
+    );
+
+
+    setTimeout(
+        () => {
+
+            barberName.focus();
+
+        },
+        50
+    );
+
+}
+
+
+function closeModal() {
+
+    barberModal.classList.add(
+        "hidden"
+    );
+
+
+    document.body.classList.remove(
+        "modal-open"
+    );
+
+
+    editingBarberId =
+        null;
+
+}
+
+
+/* =====================================================
+   MODAL AVATAR
+===================================================== */
+
+function updateModalAvatar() {
+
+    const value =
+        barberName.value.trim();
+
+
+    barberModalAvatar.textContent =
+        value
+            ? getInitials(
+                value
+            )
+            : "NB";
+
+}
+
+
+/* =====================================================
+   SERVICES
+===================================================== */
+
+function renderServices(
+    selectedIds
+) {
+
+    barberServices.innerHTML =
+        services
+            .map(
+                service => `
+
+                    <label
+                        class="
+                            modern-service-option
+                        "
+                    >
 
                         <input
                             type="checkbox"
-                            class="schedule-enabled"
-                            ${config.enabled ? "checked" : ""}
+                            value="${service.id}"
+                            ${
+                                selectedIds.includes(
+                                    service.id
+                                )
+                                    ? "checked"
+                                    : ""
+                            }
                         >
 
+
                         <span
-                            class="modern-switch-slider"
-                        ></span>
+                            class="
+                                modern-service-check
+                            "
+                        >
+                            ✓
+                        </span>
+
+
+                        <div>
+
+                            <strong>
+                                ${service.name}
+                            </strong>
+
+                            <small>
+                                ${service.duration}
+                                min ·
+                                $${service.price}
+                            </small>
+
+                        </div>
 
                     </label>
 
-                    <strong>${label}</strong>
+                `
+            )
+            .join("");
 
-                </div>
-
-                <div class="modern-schedule-times">
-
-                    <input
-                        type="time"
-                        class="schedule-start"
-                        value="${escapeHTML(config.start)}"
-                        ${config.enabled ? "" : "hidden"}
-                    >
-
-                    ${
-                        config.enabled
-                            ? "<span>→</span>"
-                            : `<span class="schedule-rest-label">
-                                Descanso
-                               </span>`
-                    }
-
-                    <input
-                        type="time"
-                        class="schedule-end"
-                        value="${escapeHTML(config.end)}"
-                        ${config.enabled ? "" : "hidden"}
-                    >
-
-                </div>
-
-            </div>
-        `;
-    }).join("");
 }
 
-function updateScheduleState(checkbox) {
-    const schedule = collectSchedule();
 
-    const row = checkbox.closest(
-        ".modern-schedule-row"
-    );
+/* =====================================================
+   SCHEDULE
+===================================================== */
 
-    schedule[row.dataset.day].enabled =
+function renderSchedule(
+    schedule
+) {
+
+    scheduleEditor.innerHTML =
+        Object
+            .entries(
+                dayLabels
+            )
+            .map(
+                ([
+                    day,
+                    label
+                ]) => {
+
+                    const config =
+                        schedule[day] ||
+                        defaultSchedule[day];
+
+
+                    return `
+
+                        <div
+                            class="
+                                modern-schedule-row
+                                ${
+                                    config.enabled
+                                        ? ""
+                                        : "disabled"
+                                }
+                            "
+                            data-day="${day}"
+                        >
+
+                            <div
+                                class="
+                                    modern-schedule-day
+                                "
+                            >
+
+                                <label
+                                    class="
+                                        modern-switch
+                                        small
+                                    "
+                                >
+
+                                    <input
+                                        type="checkbox"
+                                        class="
+                                            schedule-enabled
+                                        "
+                                        ${
+                                            config.enabled
+                                                ? "checked"
+                                                : ""
+                                        }
+                                    >
+
+                                    <span
+                                        class="
+                                            modern-switch-slider
+                                        "
+                                    ></span>
+
+                                </label>
+
+
+                                <strong>
+                                    ${label}
+                                </strong>
+
+                            </div>
+
+
+                            <div
+                                class="
+                                    modern-schedule-times
+                                "
+                            >
+
+                                ${
+                                    config.enabled
+                                        ?
+                                        `
+                                            <input
+                                                type="time"
+                                                class="
+                                                    schedule-start
+                                                "
+                                                value="${config.start}"
+                                            >
+
+                                            <span>
+                                                →
+                                            </span>
+
+                                            <input
+                                                type="time"
+                                                class="
+                                                    schedule-end
+                                                "
+                                                value="${config.end}"
+                                            >
+                                        `
+                                        :
+                                        `
+                                            <span
+                                                class="
+                                                    schedule-rest-label
+                                                "
+                                            >
+                                                Descanso
+                                            </span>
+
+                                            <input
+                                                type="time"
+                                                class="
+                                                    schedule-start
+                                                "
+                                                value="${config.start}"
+                                                hidden
+                                            >
+
+                                            <input
+                                                type="time"
+                                                class="
+                                                    schedule-end
+                                                "
+                                                value="${config.end}"
+                                                hidden
+                                            >
+                                        `
+                                }
+
+                            </div>
+
+                        </div>
+
+                    `;
+
+                }
+            )
+            .join("");
+
+}
+
+
+/* =====================================================
+   SCHEDULE SWITCH
+===================================================== */
+
+function updateScheduleState(
+    checkbox
+) {
+
+    const schedule =
+        collectSchedule();
+
+
+    const row =
+        checkbox.closest(
+            ".modern-schedule-row"
+        );
+
+
+    const day =
+        row.dataset.day;
+
+
+    schedule[day].enabled =
         checkbox.checked;
 
-    renderSchedule(schedule);
+
+    renderSchedule(
+        schedule
+    );
+
 }
+
+
+/* =====================================================
+   COLLECT SCHEDULE
+===================================================== */
 
 function collectSchedule() {
+
     const result = {};
 
-    scheduleEditor.querySelectorAll(
-        ".modern-schedule-row"
-    ).forEach(row => {
-        const day = row.dataset.day;
 
-        result[day] = {
-            enabled: row.querySelector(
-                ".schedule-enabled"
-            ).checked,
+    scheduleEditor
+        .querySelectorAll(
+            ".modern-schedule-row"
+        )
+        .forEach(
+            row => {
 
-            start: row.querySelector(
-                ".schedule-start"
-            ).value || defaultSchedule[day].start,
+                const day =
+                    row.dataset.day;
 
-            end: row.querySelector(
-                ".schedule-end"
-            ).value || defaultSchedule[day].end
-        };
-    });
+
+                const enabled =
+                    row.querySelector(
+                        ".schedule-enabled"
+                    ).checked;
+
+
+                const startInput =
+                    row.querySelector(
+                        ".schedule-start"
+                    );
+
+
+                const endInput =
+                    row.querySelector(
+                        ".schedule-end"
+                    );
+
+
+                result[day] = {
+                    enabled,
+
+                    start:
+                        startInput?.value ||
+                        defaultSchedule[day].start,
+
+                    end:
+                        endInput?.value ||
+                        defaultSchedule[day].end
+                };
+
+            }
+        );
+
 
     return result;
+
 }
 
-function validateSchedule(schedule) {
-    for (const [day, info] of Object.entries(schedule)) {
+
+/* =====================================================
+   SAVE
+===================================================== */
+
+function saveBarber() {
+
+    const name =
+        barberName.value.trim();
+
+
+    const phone =
+        barberPhone.value.trim();
+
+
+    if (!name) {
+
+        showToast(
+            "Ingresa el nombre del barbero."
+        );
+
+        barberName.focus();
+
+        return;
+
+    }
+
+
+    const selectedServices =
+        Array.from(
+            barberServices
+                .querySelectorAll(
+                    "input[type='checkbox']:checked"
+                )
+        )
+        .map(
+            checkbox =>
+                checkbox.value
+        );
+
+
+    if (
+        !selectedServices.length
+    ) {
+
+        showToast(
+            "Selecciona al menos un servicio."
+        );
+
+        return;
+
+    }
+
+
+    const schedule =
+        collectSchedule();
+
+
+    if (
+        !validateSchedule(
+            schedule
+        )
+    ) {
+        return;
+    }
+
+
+    const barbers =
+        getBarbers();
+
+
+    const status =
+        barberActiveSwitch.checked
+            ? "active"
+            : "inactive";
+
+
+    if (
+        editingBarberId
+    ) {
+
+        const barber =
+            barbers.find(
+                item =>
+                    item.id ===
+                    editingBarberId
+            );
+
+
+        if (!barber) {
+            return;
+        }
+
+
+        barber.name =
+            name;
+
+
+        barber.phone =
+            phone;
+
+
+        barber.status =
+            status;
+
+
+        barber.serviceIds =
+            selectedServices;
+
+
+        barber.schedule =
+            schedule;
+
+
+        showToast(
+            `${name} actualizado correctamente.`
+        );
+
+    } else {
+
+        barbers.push({
+
+            id:
+                generateId(
+                    "barber"
+                ),
+
+            name,
+
+            phone,
+
+            status,
+
+            serviceIds:
+                selectedServices,
+
+            schedule
+
+        });
+
+
+        showToast(
+            `${name} fue agregado al equipo.`
+        );
+
+    }
+
+
+    saveBarbers(
+        barbers
+    );
+
+
+    closeModal();
+
+
+    renderSummary();
+
+    renderBarbers();
+
+}
+
+
+/* =====================================================
+   VALIDATE SCHEDULE
+===================================================== */
+
+function validateSchedule(
+    schedule
+) {
+
+    for (
+        const [
+            day,
+            info
+        ] of Object.entries(
+            schedule
+        )
+    ) {
+
         if (!info.enabled) {
             continue;
         }
 
-        if (!info.start || !info.end) {
+
+        if (
+            !info.start ||
+            !info.end
+        ) {
+
             showToast(
-                `Completa el horario de ${dayLabels[day]}.`,
-                "error"
+                `Completa el horario de ${
+                    dayLabels[day]
+                }.`
             );
+
             return false;
+
         }
 
-        if (info.start >= info.end) {
+
+        if (
+            info.start >=
+            info.end
+        ) {
+
             showToast(
-                `Revisa el horario de ${dayLabels[day]}.`,
-                "error"
+                `Revisa el horario de ${
+                    dayLabels[day]
+                }.`
             );
+
             return false;
+
         }
+
     }
+
 
     return true;
+
 }
 
-/* =========================================================
-   GUARDAR BARBERO
-========================================================= */
 
-async function handleSaveBarber() {
-    if (saving || creatingAccount) {
-        return;
-    }
+/* =====================================================
+   TODAY SCHEDULE
+===================================================== */
 
-    const name = barberName.value.trim();
-    const phone = barberPhone.value.trim();
-
-    if (!name) {
-        showToast(
-            "Ingresa el nombre del barbero.",
-            "error"
-        );
-        barberName.focus();
-        return;
-    }
-
-    const commissionPercent = Number(
-        barberCommission.value
-    );
-
-    if (
-        barberCommission.value.trim() === "" ||
-        !Number.isFinite(commissionPercent) ||
-        commissionPercent < 0 ||
-        commissionPercent > 100
-    ) {
-        showToast(
-            "La comisión debe estar entre 0% y 100%.",
-            "error"
-        );
-        barberCommission.focus();
-        return;
-    }
-
-    const selectedServices = Array.from(
-        barberServices.querySelectorAll(
-            "input[type='checkbox']:checked"
-        )
-    ).map(checkbox => checkbox.value);
-
-    if (!selectedServices.length) {
-        showToast(
-            "Selecciona al menos un servicio.",
-            "error"
-        );
-        return;
-    }
-
-    const schedule = collectSchedule();
-
-    if (!validateSchedule(schedule)) {
-        return;
-    }
-
-    const existing = editingBarberId
-        ? barbers.find(
-            item => item.id === editingBarberId
-        )
-        : null;
-
-    if (editingBarberId && !existing) {
-        showToast(
-            "No se encontró el barbero.",
-            "error"
-        );
-        return;
-    }
-
-    const barber = {
-        ...(existing || {}),
-        id: editingBarberId || generateId("barber"),
-        name,
-        phone,
-        status: barberActiveSwitch.checked
-            ? "active"
-            : "inactive",
-        commissionPercent,
-        serviceIds: selectedServices,
-        schedule
-    };
-
-    saving = true;
-    saveBarberButton.disabled = true;
-
-    updateAccountButton();
-
-    try {
-        await saveBarber(barber);
-
-        barbers = await getBarbers();
-
-        renderSummary();
-        renderBarbers();
-
-        showToast(
-            existing
-                ? `${name} actualizado correctamente.`
-                : `${name} fue agregado al equipo.`,
-            "success"
-        );
-
-        // Conservamos abierto el formulario para que
-        // el administrador pueda crear la cuenta.
-        editingBarberId = barber.id;
-        barberModalTitle.textContent = barber.name;
-
-        resetAccountForm();
-
-        setAccountMessage(
-            "Barbero guardado. Ahora puedes crear su cuenta de acceso.",
-            "success"
-        );
-
-        await loadAccountStatus(barber.id);
-
-    } catch (error) {
-        console.error(
-            "Error guardando barbero:",
-            error
-        );
-
-        showToast(
-            "No se pudo guardar el barbero en Firebase.",
-            "error"
-        );
-
-    } finally {
-        saving = false;
-        saveBarberButton.disabled = false;
-        updateAccountButton();
-    }
-}
-
-/* =========================================================
-   CUENTAS DE ACCESO
-========================================================= */
-
-function resetAccountForm() {
-    barberAccountEmail.value = "";
-    barberAccountPassword.value = "";
-
-    barberAccountEmail.readOnly = false;
-
-    accountStatusByBarber.delete(
-        editingBarberId
-    );
-
-    barberAccountMessage.textContent = "";
-    barberAccountMessage.style.color = "";
-
-    createBarberAccountButton.textContent =
-        "Crear cuenta de acceso";
-
-    updateAccountButton();
-}
-
-function setAccountMessage(
-    message,
-    type = "info"
+function getTodaySchedule(
+    barber
 ) {
-    barberAccountMessage.textContent = message;
 
-    barberAccountMessage.style.color =
-        type === "error"
-            ? "#ef9999"
-            : type === "success"
-                ? "#78c99c"
-                : "#e6bd78";
-}
-
-function updateAccountButton() {
-    const status = editingBarberId
-        ? accountStatusByBarber.get(editingBarberId)
-        : null;
-
-    const hasSavedBarber = Boolean(
-        editingBarberId &&
-        barbers.some(
-            barber => barber.id === editingBarberId
-        )
-    );
-
-    const email = barberAccountEmail.value.trim();
-    const password = barberAccountPassword.value;
-
-    const validEmail =
-        /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-
-    const validPassword =
-        password.length >= 8;
-
-    const active = barberActiveSwitch.checked;
-
-    const accountExists =
-        status?.exists === true;
-
-    const checking =
-        status?.checking === true;
-
-    createBarberAccountButton.disabled = (
-        !hasSavedBarber ||
-        !active ||
-        !validEmail ||
-        !validPassword ||
-        accountExists ||
-        checking ||
-        saving ||
-        creatingAccount
-    );
-
-    if (accountExists) {
-        createBarberAccountButton.textContent =
-            "Cuenta ya vinculada";
-    } else if (creatingAccount) {
-        createBarberAccountButton.textContent =
-            "Creando cuenta...";
-    } else if (checking) {
-        createBarberAccountButton.textContent =
-            "Verificando cuenta...";
-    } else {
-        createBarberAccountButton.textContent =
-            "Crear cuenta de acceso";
-    }
-}
-
-async function loadAccountStatus(barberId) {
-    accountStatusByBarber.set(
-        barberId,
-        {
-            checking: true,
-            exists: false
-        }
-    );
-
-    updateAccountButton();
-
-    setAccountMessage(
-        "Verificando si este barbero ya tiene una cuenta..."
-    );
-
-    try {
-        const snapshot = await getDocs(
-            query(
-                collection(db, "users"),
-                where("barberId", "==", barberId)
-            )
-        );
-
-        // Evita que una respuesta anterior modifique
-        // el formulario de otro barbero.
-        if (editingBarberId !== barberId) {
-            return;
-        }
-
-        if (!snapshot.empty) {
-            const account = snapshot.docs[0].data();
-
-            accountStatusByBarber.set(
-                barberId,
-                {
-                    checking: false,
-                    exists: true,
-                    uid: snapshot.docs[0].id
-                }
-            );
-
-            barberAccountEmail.value =
-                account.email || "";
-
-            barberAccountEmail.readOnly = true;
-            barberAccountPassword.value = "";
-
-            setAccountMessage(
-                "Este barbero ya tiene una cuenta vinculada.",
-                "success"
-            );
-
-        } else {
-            accountStatusByBarber.set(
-                barberId,
-                {
-                    checking: false,
-                    exists: false
-                }
-            );
-
-            setAccountMessage(
-                "Este barbero aún no tiene cuenta. " +
-                "Ingresa su correo y una contraseña temporal."
-            );
-        }
-
-    } catch (error) {
-        console.error(
-            "Error verificando cuenta:",
-            error
-        );
-
-        if (editingBarberId !== barberId) {
-            return;
-        }
-
-        // Si no podemos comprobar si existe una cuenta,
-        // bloqueamos la creación para evitar duplicados.
-        accountStatusByBarber.set(
-            barberId,
-            {
-                checking: true,
-                exists: false
-            }
-        );
-
-        setAccountMessage(
-            "No se pudo verificar la cuenta existente. " +
-            "Revisa tus permisos de Firebase.",
-            "error"
-        );
-
-    } finally {
-        updateAccountButton();
-    }
-}
-
-async function handleCreateBarberAccount() {
-    if (saving || creatingAccount) {
-        return;
-    }
-
-    const barberId = editingBarberId;
-
-    const barber = barbers.find(
-        item => item.id === barberId
-    );
-
-    if (!barber) {
-        setAccountMessage(
-            "Primero guarda el barbero.",
-            "error"
-        );
-        return;
-    }
-
-    if (barber.status !== "active") {
-        setAccountMessage(
-            "Activa y guarda al barbero antes de crear su cuenta.",
-            "error"
-        );
-        return;
-    }
-
-    const status = accountStatusByBarber.get(
-        barberId
-    );
-
-    if (!status || status.checking || status.exists) {
-        setAccountMessage(
-            "No es posible crear la cuenta hasta verificar su estado.",
-            "error"
-        );
-        return;
-    }
-
-    const email = barberAccountEmail.value
-        .trim()
-        .toLowerCase();
-
-    const password = barberAccountPassword.value;
-
-    if (
-        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-    ) {
-        setAccountMessage(
-            "Ingresa un correo válido.",
-            "error"
-        );
-        return;
-    }
-
-    if (password.length < 8) {
-        setAccountMessage(
-            "La contraseña debe tener al menos 8 caracteres.",
-            "error"
-        );
-        return;
-    }
-
-    creatingAccount = true;
-
-    saveBarberButton.disabled = true;
-    updateAccountButton();
-
-    setAccountMessage(
-        "Creando cuenta en Firebase Authentication..."
-    );
-
-    try {
-        const result = await createBarberAccount({
-            barberId,
-            email,
-            password
-        });
-
-        barberAccountPassword.value = "";
-
-        accountStatusByBarber.set(
-            barberId,
-            {
-                checking: false,
-                exists: true,
-                uid: result.uid
-            }
-        );
-
-        barberAccountEmail.readOnly = true;
-
-        setAccountMessage(
-            "Cuenta creada correctamente. " +
-            "Entrega la contraseña temporal al barbero " +
-            "por un medio seguro.",
-            "success"
-        );
-
-        showToast(
-            `Cuenta creada para ${barber.name}.`,
-            "success"
-        );
-
-    } catch (error) {
-        console.error(
-            "Error creando cuenta:",
-            error
-        );
-
-        const message = getAccountErrorMessage(error);
-
-        setAccountMessage(message, "error");
-
-        showToast(message, "error");
-
-        // Si el estado quedó incierto, verificamos de
-        // nuevo Firestore antes de permitir reintentar.
-        await loadAccountStatus(barberId);
-
-    } finally {
-        creatingAccount = false;
-        saveBarberButton.disabled = false;
-        updateAccountButton();
-    }
-}
-
-function getAccountErrorMessage(error) {
-    switch (error.code) {
-        case "auth/email-already-in-use":
-            return (
-                "Ese correo ya está registrado en Firebase. " +
-                "Revisa Authentication antes de continuar."
-            );
-
-        case "auth/invalid-email":
-            return "El correo electrónico no es válido.";
-
-        case "auth/weak-password":
-            return (
-                "La contraseña es demasiado débil. " +
-                "Utiliza una contraseña más segura."
-            );
-
-        case "auth/operation-not-allowed":
-            return (
-                "Habilita Correo electrónico/contraseña " +
-                "en Firebase Authentication."
-            );
-
-        case "permission-denied":
-            return (
-                "Firebase rechazó la operación. " +
-                "Verifica los permisos del administrador."
-            );
-
-        default:
-            return error.message ||
-                "No se pudo crear la cuenta.";
-    }
-}
-
-/* =========================================================
-   HORARIO DE HOY
-========================================================= */
-
-function getTodaySchedule(barber) {
     const days = [
         "sunday",
         "monday",
@@ -1392,128 +1683,225 @@ function getTodaySchedule(barber) {
         "saturday"
     ];
 
-    const today = days[new Date().getDay()];
 
-    return barber.schedule?.[today] || null;
-}
+    const today =
+        days[
+            new Date()
+                .getDay()
+        ];
 
-function formatTodaySchedule(schedule) {
-    if (!schedule?.enabled) {
-        return "Descanso";
-    }
 
     return (
-        `${formatTime(schedule.start)} — ` +
-        `${formatTime(schedule.end)}`
+        barber.schedule?.[today] ||
+        null
     );
+
 }
 
-/* =========================================================
-   FECHA LOCAL
-========================================================= */
+
+/* =====================================================
+   FORMAT TODAY
+===================================================== */
+
+function formatTodaySchedule(
+    schedule
+) {
+
+    if (
+        !schedule ||
+        !schedule.enabled
+    ) {
+
+        return "Descanso";
+
+    }
+
+
+    return `${
+        formatTime(
+            schedule.start
+        )
+    } — ${
+        formatTime(
+            schedule.end
+        )
+    }`;
+
+}
+
+
+/* =====================================================
+   LOCAL DATE
+===================================================== */
 
 function getLocalDate() {
-    const now = new Date();
 
-    const year = now.getFullYear();
+    const now =
+        new Date();
 
-    const month = String(
-        now.getMonth() + 1
-    ).padStart(2, "0");
 
-    const day = String(
-        now.getDate()
-    ).padStart(2, "0");
+    const year =
+        now.getFullYear();
+
+
+    const month =
+        String(
+            now.getMonth() + 1
+        ).padStart(
+            2,
+            "0"
+        );
+
+
+    const day =
+        String(
+            now.getDate()
+        ).padStart(
+            2,
+            "0"
+        );
+
 
     return `${year}-${month}-${day}`;
+
 }
 
-/* =========================================================
-   FORMATO DE HORA
-========================================================= */
+
+/* =====================================================
+   TIME FORMAT
+===================================================== */
 
 function formatTime(time) {
-    if (!time) {
-        return "—";
-    }
 
-    const [hours, minutes] = String(time)
-        .split(":")
-        .map(Number);
+    const [
+        hours,
+        minutes
+    ] =
+        time
+            .split(":")
+            .map(Number);
 
-    const period = hours >= 12
-        ? "PM"
-        : "AM";
 
-    const hour = hours % 12 || 12;
+    const period =
+        hours >= 12
+            ? "PM"
+            : "AM";
 
-    return (
-        `${hour}:` +
-        `${String(minutes).padStart(2, "0")} ` +
-        period
-    );
+
+    const formattedHour =
+        hours % 12 ||
+        12;
+
+
+    return `${
+        formattedHour
+    }:${
+        String(
+            minutes
+        ).padStart(
+            2,
+            "0"
+        )
+    } ${period}`;
+
 }
 
-/* =========================================================
-   INICIALES
-========================================================= */
+
+/* =====================================================
+   INITIALS
+===================================================== */
 
 function getInitials(name) {
-    return String(name || "")
+
+    return String(
+        name
+    )
         .trim()
         .split(/\s+/)
-        .slice(0, 2)
-        .map(part => part.charAt(0).toUpperCase())
+        .slice(
+            0,
+            2
+        )
+        .map(
+            part =>
+                part
+                    .charAt(0)
+                    .toUpperCase()
+        )
         .join("");
+
 }
 
-/* =========================================================
-   SEGURIDAD HTML
-========================================================= */
+
+/* =====================================================
+   ESCAPE HTML
+===================================================== */
 
 function escapeHTML(value) {
-    const element = document.createElement("div");
-    element.textContent = String(value ?? "");
+
+    const element =
+        document.createElement(
+            "div"
+        );
+
+
+    element.textContent =
+        String(
+            value || ""
+        );
+
+
     return element.innerHTML;
+
 }
 
-/* =========================================================
-   NOTIFICACIONES
-========================================================= */
 
-function showToast(
-    message,
-    type = "info"
-) {
-    const toast = $("toast");
+/* =====================================================
+   TOAST
+===================================================== */
 
-    if (!toast) {
-        console.log(message);
-        return;
-    }
+let toastTimer;
 
-    toast.textContent = message;
 
-    toast.classList.remove(
-        "success",
-        "error"
+function showToast(message) {
+
+    const toast =
+        document.getElementById(
+            "toast"
+        );
+
+
+    toast.textContent =
+        message;
+
+
+    toast.classList.add(
+        "show"
     );
 
-    if (type !== "info") {
-        toast.classList.add(type);
-    }
 
-    toast.classList.add("show");
+    clearTimeout(
+        toastTimer
+    );
 
-    clearTimeout(toastTimer);
 
-    toastTimer = setTimeout(() => {
-        toast.classList.remove("show");
-    }, 3500);
+    toastTimer =
+        setTimeout(
+            () => {
+
+                toast.classList.remove(
+                    "show"
+                );
+
+            },
+            2800
+        );
+
 }
 
-/* =========================================================
-   INICIAR
-========================================================= */
+
+/* =====================================================
+   INIT
+===================================================== */
 
 initialize();
