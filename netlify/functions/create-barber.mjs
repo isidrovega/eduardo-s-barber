@@ -30,10 +30,10 @@ function getFirebaseAdmin() {
 
     const app = getApps()[0] || initializeApp({
         credential: cert({
-            projectId,
-            clientEmail,
-            privateKey
-        })
+    projectId,
+    clientEmail,
+    privateKey: privateKey.replace(/\\n/g, "\n").trim()
+})
     });
 
     return {
