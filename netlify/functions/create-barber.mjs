@@ -13,7 +13,11 @@ import {
     FieldValue
 } from "firebase-admin/firestore";
 
-const ADMIN_UID = "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2";
+const ADMIN_UIDS = new Set([
+    "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2",
+    "KcHcm82nZESqoHy7RrHZdyj1y2p2"
+]);
+
 
 function getFirebaseAdmin() {
     const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -206,13 +210,13 @@ export default async function handler(request) {
         );
 
         if (
-            decodedToken.uid !== ADMIN_UID ||
-            decodedToken.email_verified !== true
-        ) {
-            return response(403, {
-                error: "No tienes permiso para crear cuentas."
-            });
-        }
+    !ADMIN_UIDS.has(decodedToken.uid) ||
+    decodedToken.email_verified !== true
+) {
+    return response(403, {
+        error: "No tienes permiso para crear cuentas."
+    });
+}
 
         let body;
 
