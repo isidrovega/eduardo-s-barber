@@ -21,6 +21,12 @@ import {
 } from "./appointment-booking.js";
 
 import {
+  initializeAppointmentCalendar,
+  filterAppointmentsByCalendar,
+  renderAppointmentCalendar
+} from "./appointments-calendar.js";
+
+import {
   collection,
   getDocs,
   onSnapshot
@@ -85,9 +91,14 @@ async function initialize() {
 
     await populateSelectors();
 
+    initializeAppointmentCalendar(
+      renderAppointments
+    );
+
     configureEvents();
     startAppointmentsListener();
     handleIncomingCustomerBooking();
+
   } catch (error) {
     console.error("Error al iniciar citas:", error);
 
@@ -102,7 +113,8 @@ async function initialize() {
     `;
 
     showToast(
-      error.message || "No se pudo cargar el módulo de citas."
+      error.message ||
+      "No se pudo cargar el módulo de citas."
     );
   }
 }
@@ -112,28 +124,54 @@ async function initialize() {
 ===================================================== */
 
 async function populateSelectors() {
-  const snapshot = await getDocs(collection(db, "barbers"));
+  const snapshot = await getDocs(
+    collection(db, "barbers")
+  );
+
+  /*
+     Conservar todos los barberos en memoria
+     permite mostrar nombres históricos
+     incluso si un barbero ya no está activo.
+  */
 
   firebaseBarbers = snapshot.docs
     .map(document => ({
       ...document.data(),
       id: document.id
     }))
-    .filter(barber => barber.status === "active")
     .sort((a, b) =>
-      (a.name || "").localeCompare(b.name || "", "es")
+      (a.name || "").localeCompare(
+        b.name || "",
+        "es"
+      )
     );
 
   barberSelect.replaceChildren();
 
-  for (const barber of firebaseBarbers) {
+  const activeBarbers = firebaseBarbers.filter(
+    barber => barber.status === "active"
+  );
+
+  for (const barber of activeBarbers) {
     barberSelect.add(
-      new Option(barber.name || barber.id, barber.id)
+      new Option(
+        barber.name || barber.id,
+        barber.id
+      )
     );
   }
 
-  if (!firebaseBarbers.length) {
-    throw new Error("No hay barberos activos disponibles.");
+  if (!activeBarbers.length) {
+    console.warn(
+      "No hay barberos activos para crear citas."
+    );
+
+    barberSelect.add(
+      new Option(
+        "Sin barberos activos",
+        ""
+      )
+    );
   }
 
   updateServiceOptions();
@@ -147,7 +185,9 @@ function updateServiceOptions() {
   const previousService = serviceSelect.value;
 
   const allowedServices = services.filter(
-    service => barber?.serviceIds?.includes(service.id)
+    service => barber?.serviceIds?.includes(
+      service.id
+    )
   );
 
   serviceSelect.replaceChildren();
@@ -171,13 +211,16 @@ function updateServiceOptions() {
 
   if (!allowedServices.length) {
     serviceSelect.add(
-      new Option("Sin servicios disponibles", "")
+      new Option(
+        "Sin servicios disponibles",
+        ""
+      )
     );
   }
 }
 
 /* =====================================================
-   FIRESTORE
+   FIRESTORE EN TIEMPO REAL
 ===================================================== */
 
 function startAppointmentsListener() {
@@ -187,19 +230,26 @@ function startAppointmentsListener() {
 
   unsubscribeAppointments = onSnapshot(
     collection(db, "appointments"),
+
     snapshot => {
-      firebaseAppointments = snapshot.docs.map(document => ({
-        ...document.data(),
-        id: document.id
-      }));
+      firebaseAppointments = snapshot.docs.map(
+        document => ({
+          ...document.data(),
+          id: document.id
+        })
+      );
 
       appointmentsLoaded = true;
 
       renderAppointments();
       renderTimes();
     },
+
     error => {
-      console.error("Error al consultar citas:", error);
+      console.error(
+        "Error al consultar citas:",
+        error
+      );
 
       appointmentsLoaded = false;
 
@@ -213,7 +263,9 @@ function startAppointmentsListener() {
         </tr>
       `;
 
-      showToast("Error al consultar citas.");
+      showToast(
+        "Error al consultar citas."
+      );
     }
   );
 }
@@ -223,45 +275,90 @@ function startAppointmentsListener() {
 ===================================================== */
 
 function configureEvents() {
-  document.getElementById("newAppointmentButton")
-    .addEventListener("click", openModal);
+  document.getElementById(
+    "newAppointmentButton"
+  ).addEventListener(
+    "click",
+    openModal
+  );
 
-  document.getElementById("closeModalButton")
-    .addEventListener("click", closeModal);
+  document.getElementById(
+    "closeModalButton"
+  ).addEventListener(
+    "click",
+    closeModal
+  );
 
-  document.getElementById("cancelModalButton")
-    .addEventListener("click", closeModal);
+  document.getElementById(
+    "cancelModalButton"
+  ).addEventListener(
+    "click",
+    closeModal
+  );
 
-  document.getElementById("saveAppointmentButton")
-    .addEventListener("click", saveAppointment);
+  document.getElementById(
+    "saveAppointmentButton"
+  ).addEventListener(
+    "click",
+    saveAppointment
+  );
 
-  phoneInput.addEventListener("input", detectCustomer);
+  phoneInput.addEventListener(
+    "input",
+    detectCustomer
+  );
 
-  barberSelect.addEventListener("change", () => {
-    updateServiceOptions();
-    renderTimes();
-  });
-
-  serviceSelect.addEventListener("change", renderTimes);
-  dateInput.addEventListener("change", renderTimes);
-
-  modal.addEventListener("click", event => {
-    if (event.target === modal) {
-      closeModal();
+  barberSelect.addEventListener(
+    "change",
+    () => {
+      updateServiceOptions();
+      renderTimes();
     }
-  });
+  );
 
-  document.querySelectorAll(".filter").forEach(button => {
-    button.addEventListener("click", () => {
-      document.querySelectorAll(".filter").forEach(item => {
-        item.classList.remove("active");
-      });
+  serviceSelect.addEventListener(
+    "change",
+    renderTimes
+  );
 
-      button.classList.add("active");
-      currentFilter = button.dataset.filter;
+  dateInput.addEventListener(
+    "change",
+    renderTimes
+  );
 
-      renderAppointments();
-    });
+  modal.addEventListener(
+    "click",
+    event => {
+      if (event.target === modal) {
+        closeModal();
+      }
+    }
+  );
+
+  document.querySelectorAll(
+    ".filter"
+  ).forEach(button => {
+    button.addEventListener(
+      "click",
+      () => {
+        document.querySelectorAll(
+          ".filter"
+        ).forEach(item => {
+          item.classList.remove(
+            "active"
+          );
+        });
+
+        button.classList.add(
+          "active"
+        );
+
+        currentFilter =
+          button.dataset.filter;
+
+        renderAppointments();
+      }
+    );
   });
 
   appointmentsTable.addEventListener(
@@ -269,14 +366,19 @@ function configureEvents() {
     handleTableAction
   );
 
-  document.addEventListener("keydown", event => {
-    if (
-      event.key === "Escape" &&
-      !modal.classList.contains("hidden")
-    ) {
-      closeModal();
+  document.addEventListener(
+    "keydown",
+    event => {
+      if (
+        event.key === "Escape" &&
+        !modal.classList.contains(
+          "hidden"
+        )
+      ) {
+        closeModal();
+      }
     }
-  });
+  );
 }
 
 /* =====================================================
@@ -288,11 +390,14 @@ function handleIncomingCustomerBooking() {
     window.location.search
   );
 
-  if (params.get("new") !== "1") return;
+  if (params.get("new") !== "1") {
+    return;
+  }
 
-  const storedCustomer = sessionStorage.getItem(
-    "barbershop_booking_customer"
-  );
+  const storedCustomer =
+    sessionStorage.getItem(
+      "barbershop_booking_customer"
+    );
 
   openModal();
 
@@ -302,10 +407,15 @@ function handleIncomingCustomerBooking() {
   }
 
   try {
-    const customer = JSON.parse(storedCustomer);
+    const customer = JSON.parse(
+      storedCustomer
+    );
 
-    phoneInput.value = customer.phone || "";
-    nameInput.value = customer.name || "";
+    phoneInput.value =
+      customer.phone || "";
+
+    nameInput.value =
+      customer.name || "";
 
     detectCustomer();
 
@@ -315,9 +425,15 @@ function handleIncomingCustomerBooking() {
 
     cleanBookingURL();
 
-    showToast("Cliente seleccionado para nueva cita.");
+    showToast(
+      "Cliente seleccionado para nueva cita."
+    );
+
   } catch (error) {
-    console.error("Error al cargar cliente:", error);
+    console.error(
+      "Error al cargar cliente:",
+      error
+    );
 
     sessionStorage.removeItem(
       "barbershop_booking_customer"
@@ -341,13 +457,23 @@ function cleanBookingURL() {
 
 function openModal() {
   resetForm();
-  modal.classList.remove("hidden");
 
-  setTimeout(() => phoneInput.focus(), 50);
+  modal.classList.remove(
+    "hidden"
+  );
+
+  setTimeout(
+    () => phoneInput.focus(),
+    50
+  );
 }
 
 function closeModal() {
-  modal.classList.add("hidden");
+  ++customerLookupVersion;
+
+  modal.classList.add(
+    "hidden"
+  );
 }
 
 function resetForm() {
@@ -367,49 +493,69 @@ function resetForm() {
   dateInput.min = getLocalDate();
   dateInput.value = getLocalDate();
 
-  barberSelect.value = firebaseBarbers[0]?.id || "";
+  const firstActiveBarber =
+    firebaseBarbers.find(
+      barber => barber.status === "active"
+    );
+
+  barberSelect.value =
+    firstActiveBarber?.id || "";
 
   updateServiceOptions();
 
   selectedTime = "";
+
   renderTimes();
 }
 
 /* =====================================================
-   DETECCIÓN DE CLIENTES EN FIRESTORE
+   DETECCIÓN DE CLIENTES
 ===================================================== */
 
 async function detectCustomer() {
   const phone = phoneInput.value.trim();
-  const lookupVersion = ++customerLookupVersion;
 
-  if (phone.replace(/\D/g, "").length < 7) {
+  const lookupVersion =
+    ++customerLookupVersion;
+
+  if (
+    phone.replace(/\D/g, "").length < 7
+  ) {
     customerDetection.replaceChildren();
     return;
   }
 
-  customerDetection.textContent = "Buscando cliente...";
+  customerDetection.textContent =
+    "Buscando cliente...";
 
   try {
-    const customer = await findCustomerByPhone(phone);
+    const customer =
+      await findCustomerByPhone(
+        phone
+      );
 
     if (
-      lookupVersion !== customerLookupVersion ||
+      lookupVersion !==
+        customerLookupVersion ||
       phoneInput.value.trim() !== phone
     ) {
       return;
     }
 
     if (customer) {
-      nameInput.value = customer.name || "";
+      nameInput.value =
+        customer.name || "";
 
       customerDetection.innerHTML = `
         <div class="customer-found">
           ✓ Cliente encontrado:
-          <strong>${escapeHTML(customer.name)}</strong>
+          <strong>
+            ${escapeHTML(customer.name)}
+          </strong>
           · ${Number(customer.visits) || 0} visitas
         </div>
       `;
+
     } else {
       customerDetection.innerHTML = `
         <div class="customer-new">
@@ -417,10 +563,17 @@ async function detectCustomer() {
         </div>
       `;
     }
-  } catch (error) {
-    console.error("Error al buscar cliente:", error);
 
-    if (lookupVersion === customerLookupVersion) {
+  } catch (error) {
+    console.error(
+      "Error al buscar cliente:",
+      error
+    );
+
+    if (
+      lookupVersion ===
+      customerLookupVersion
+    ) {
       customerDetection.textContent =
         "No se pudo consultar el cliente.";
     }
@@ -432,16 +585,33 @@ async function detectCustomer() {
 ===================================================== */
 
 function toMinutes(value) {
-  if (!/^\d{2}:\d{2}$/.test(value || "")) {
+  if (
+    !/^\d{2}:\d{2}$/.test(
+      value || ""
+    )
+  ) {
     return NaN;
   }
 
-  const [hours, minutes] = value.split(":").map(Number);
+  const [hours, minutes] =
+    value.split(":").map(Number);
+
+  if (
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return NaN;
+  }
 
   return hours * 60 + minutes;
 }
 
-function getAvailableTimes(date, barberId) {
+function getAvailableTimes(
+  date,
+  barberId
+) {
   if (
     !appointmentsLoaded ||
     !date ||
@@ -456,13 +626,17 @@ function getAvailableTimes(date, barberId) {
   );
 
   const service = services.find(
-    item => item.id === serviceSelect.value
+    item => item.id ===
+      serviceSelect.value
   );
 
   if (
     !barber ||
+    barber.status !== "active" ||
     !service ||
-    !barber.serviceIds?.includes(service.id)
+    !barber.serviceIds?.includes(
+      service.id
+    )
   ) {
     return [];
   }
@@ -475,14 +649,26 @@ function getAvailableTimes(date, barberId) {
     "thursday",
     "friday",
     "saturday"
-  ][new Date(`${date}T12:00:00Z`).getUTCDay()];
+  ][
+    new Date(
+      `${date}T12:00:00Z`
+    ).getUTCDay()
+  ];
 
-  const schedule = barber.schedule?.[weekday];
+  const schedule =
+    barber.schedule?.[weekday];
 
-  if (!schedule?.enabled) return [];
+  if (!schedule?.enabled) {
+    return [];
+  }
 
-  const opening = toMinutes(schedule.start);
-  const closing = toMinutes(schedule.end);
+  const opening = toMinutes(
+    schedule.start
+  );
+
+  const closing = toMinutes(
+    schedule.end
+  );
 
   if (
     !Number.isFinite(opening) ||
@@ -491,56 +677,94 @@ function getAvailableTimes(date, barberId) {
     return [];
   }
 
-  const occupied = firebaseAppointments.filter(
-    appointment =>
-      appointment.date === date &&
-      appointment.barberId === barberId &&
-      appointment.status !== "cancelled" &&
-      appointment.status !== "no-show"
-  );
+  const occupied =
+    firebaseAppointments.filter(
+      appointment =>
+        appointment.date === date &&
+        appointment.barberId === barberId &&
+        appointment.status !==
+          "cancelled" &&
+        appointment.status !==
+          "no-show"
+    );
 
-  const businessTime = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/Mazatlan",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).format(new Date());
+  const businessTime =
+    new Intl.DateTimeFormat(
+      "en-GB",
+      {
+        timeZone:
+          "America/Mazatlan",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23"
+      }
+    ).format(new Date());
 
-  const currentMinutes = toMinutes(businessTime);
+  const currentMinutes =
+    toMinutes(businessTime);
 
-  return availableTimes.filter(time => {
-    const start = toMinutes(time);
-    const end = start + service.duration;
+  return availableTimes.filter(
+    time => {
+      const start =
+        toMinutes(time);
 
-    if (start < opening || end > closing) {
-      return false;
-    }
+      const end =
+        start + service.duration;
 
-    if (
-      date === getLocalDate() &&
-      start <= currentMinutes
-    ) {
-      return false;
-    }
+      if (
+        start < opening ||
+        end > closing
+      ) {
+        return false;
+      }
 
-    return !occupied.some(appointment => {
-      const existingService = services.find(
-        item => item.id === appointment.serviceId
+      if (
+        date === getLocalDate() &&
+        start <= currentMinutes
+      ) {
+        return false;
+      }
+
+      return !occupied.some(
+        appointment => {
+          const existingService =
+            services.find(
+              item =>
+                item.id ===
+                appointment.serviceId
+            );
+
+          const existingStart =
+            toMinutes(
+              appointment.time
+            );
+
+          if (
+            !Number.isFinite(
+              existingStart
+            )
+          ) {
+            return true;
+          }
+
+          const existingEnd =
+            existingStart +
+            (
+              Number(
+                appointment.duration
+              ) ||
+              existingService?.duration ||
+              30
+            );
+
+          return (
+            start < existingEnd &&
+            end > existingStart
+          );
+        }
       );
-
-      const existingStart = toMinutes(appointment.time);
-
-      const existingEnd =
-        existingStart +
-        (
-          appointment.duration ||
-          existingService?.duration ||
-          30
-        );
-
-      return start < existingEnd && end > existingStart;
-    });
-  });
+    }
+  );
 }
 
 function renderTimes() {
@@ -549,41 +773,60 @@ function renderTimes() {
     barberSelect.value
   );
 
-  if (!times.includes(selectedTime)) {
-    selectedTime = times[0] || "";
+  if (
+    !times.includes(
+      selectedTime
+    )
+  ) {
+    selectedTime =
+      times[0] || "";
   }
 
   if (!times.length) {
     timeContainer.innerHTML = `
-      <div class="empty" style="grid-column: 1 / -1;">
+      <div
+        class="empty"
+        style="grid-column: 1 / -1;"
+      >
         No hay horarios disponibles.
       </div>
     `;
+
     return;
   }
 
-  timeContainer.innerHTML = times
-    .map(time => `
-      <button
-        type="button"
-        class="time-button ${
-          selectedTime === time ? "selected" : ""
-        }"
-        data-time="${time}"
-      >
-        ${formatTime(time)}
-      </button>
-    `)
-    .join("");
+  timeContainer.innerHTML =
+    times.map(
+      time => `
+        <button
+          type="button"
+          class="time-button ${
+            selectedTime === time
+              ? "selected"
+              : ""
+          }"
+          data-time="${time}"
+        >
+          ${formatTime(time)}
+        </button>
+      `
+    ).join("");
 
-  timeContainer
-    .querySelectorAll(".time-button")
-    .forEach(button => {
-      button.addEventListener("click", () => {
-        selectedTime = button.dataset.time;
-        renderTimes();
-      });
-    });
+  timeContainer.querySelectorAll(
+    ".time-button"
+  ).forEach(
+    button => {
+      button.addEventListener(
+        "click",
+        () => {
+          selectedTime =
+            button.dataset.time;
+
+          renderTimes();
+        }
+      );
+    }
+  );
 }
 
 /* =====================================================
@@ -591,25 +834,43 @@ function renderTimes() {
 ===================================================== */
 
 async function saveAppointment() {
-  if (savingAppointment) return;
-
-  if (!appointmentsLoaded) {
-    showToast("Espera a que carguen las citas.");
+  if (savingAppointment) {
     return;
   }
 
-  const name = nameInput.value.trim();
-  const phone = phoneInput.value.trim();
-  const date = dateInput.value;
+  if (!appointmentsLoaded) {
+    showToast(
+      "Espera a que carguen las citas."
+    );
+
+    return;
+  }
+
+  const name =
+    nameInput.value.trim();
+
+  const phone =
+    phoneInput.value.trim();
+
+  const date =
+    dateInput.value;
 
   if (!name) {
-    showToast("Ingresa el nombre del cliente.");
+    showToast(
+      "Ingresa el nombre del cliente."
+    );
+
     nameInput.focus();
     return;
   }
 
-  if (phone.replace(/\D/g, "").length < 7) {
-    showToast("Ingresa un teléfono válido.");
+  if (
+    phone.replace(/\D/g, "").length < 7
+  ) {
+    showToast(
+      "Ingresa un teléfono válido."
+    );
+
     phoneInput.focus();
     return;
   }
@@ -620,7 +881,34 @@ async function saveAppointment() {
     !barberSelect.value ||
     !serviceSelect.value
   ) {
-    showToast("Selecciona servicio, barbero, fecha y hora.");
+    showToast(
+      "Selecciona servicio, barbero, fecha y hora."
+    );
+
+    return;
+  }
+
+  /*
+     Comprobar otra vez que el horario
+     seleccionado siga disponible.
+  */
+
+  const currentAvailableTimes =
+    getAvailableTimes(
+      date,
+      barberSelect.value
+    );
+
+  if (
+    !currentAvailableTimes.includes(
+      selectedTime
+    )
+  ) {
+    showToast(
+      "El horario seleccionado ya no está disponible."
+    );
+
+    renderTimes();
     return;
   }
 
@@ -635,9 +923,10 @@ async function saveAppointment() {
     notes: notesInput.value.trim()
   };
 
-  const button = document.getElementById(
-    "saveAppointmentButton"
-  );
+  const button =
+    document.getElementById(
+      "saveAppointmentButton"
+    );
 
   savingAppointment = true;
   button.disabled = true;
@@ -645,19 +934,30 @@ async function saveAppointment() {
   let appointmentCreated = false;
 
   try {
-    await createAppointment(appointment);
+    await createAppointment(
+      appointment
+    );
+
     appointmentCreated = true;
 
-    await getOrCreateCustomer(name, phone);
+    await getOrCreateCustomer(
+      name,
+      phone
+    );
 
     closeModal();
+
     renderAppointments();
 
     showToast(
       `Cita de ${name} y cliente registrados en Firebase.`
     );
+
   } catch (error) {
-    console.error("Error al guardar cita:", error);
+    console.error(
+      "Error al guardar cita:",
+      error
+    );
 
     if (appointmentCreated) {
       closeModal();
@@ -665,11 +965,14 @@ async function saveAppointment() {
       showToast(
         "La cita se guardó, pero falló el registro del cliente."
       );
+
     } else {
       showToast(
-        error.message || "No se pudo registrar la cita."
+        error.message ||
+        "No se pudo registrar la cita."
       );
     }
+
   } finally {
     savingAppointment = false;
     button.disabled = false;
@@ -677,7 +980,57 @@ async function saveAppointment() {
 }
 
 /* =====================================================
-   TABLA DE CITAS
+   FILTROS DE CITAS
+===================================================== */
+
+function getFilteredAppointments() {
+  /*
+     Primero aplicar los filtros de
+     barbero y rango de fechas.
+  */
+
+  let appointments =
+    filterAppointmentsByCalendar(
+      firebaseAppointments
+    );
+
+  /*
+     Después aplicar el filtro
+     de estado seleccionado.
+  */
+
+  if (currentFilter === "today") {
+    appointments =
+      appointments.filter(
+        appointment =>
+          appointment.date ===
+          getLocalDate()
+      );
+
+  } else if (
+    currentFilter !== "all"
+  ) {
+    appointments =
+      appointments.filter(
+        appointment =>
+          appointment.status ===
+          currentFilter
+      );
+  }
+
+  appointments.sort(
+    (a, b) =>
+      `${a.date || ""} ${a.time || ""}`
+        .localeCompare(
+          `${b.date || ""} ${b.time || ""}`
+        )
+  );
+
+  return appointments;
+}
+
+/* =====================================================
+   TABLA Y CALENDARIO
 ===================================================== */
 
 function renderAppointments() {
@@ -691,25 +1044,21 @@ function renderAppointments() {
         </td>
       </tr>
     `;
+
     return;
   }
 
-  let appointments = [...firebaseAppointments];
+  const appointments =
+    getFilteredAppointments();
 
-  if (currentFilter === "today") {
-    appointments = appointments.filter(
-      appointment => appointment.date === getLocalDate()
-    );
-  } else if (currentFilter !== "all") {
-    appointments = appointments.filter(
-      appointment => appointment.status === currentFilter
-    );
-  }
+  /*
+     El calendario y la tabla reciben
+     exactamente las mismas citas filtradas.
+  */
 
-  appointments.sort((a, b) =>
-    `${a.date} ${a.time}`.localeCompare(
-      `${b.date} ${b.time}`
-    )
+  renderAppointmentCalendar(
+    appointments,
+    firebaseBarbers
   );
 
   if (!appointments.length) {
@@ -717,82 +1066,117 @@ function renderAppointments() {
       <tr>
         <td colspan="8">
           <div class="empty">
-            No hay citas para mostrar.
+            No hay citas para los filtros seleccionados.
           </div>
         </td>
       </tr>
     `;
+
     return;
   }
 
-  appointmentsTable.innerHTML = appointments
-    .map(appointment => {
-      const service = getService(appointment.serviceId);
-      const barber = getBarber(appointment.barberId);
+  appointmentsTable.innerHTML =
+    appointments.map(
+      appointment => {
+        const service =
+          getService(
+            appointment.serviceId
+          );
 
-      return `
-        <tr>
-          <td>
-            ${formatDate(appointment.date)}
-          </td>
+        const barber =
+          getBarber(
+            appointment.barberId
+          );
 
-          <td>
-            <strong>${formatTime(appointment.time)}</strong>
-          </td>
+        return `
+          <tr>
 
-          <td>
-            <strong>
-              ${escapeHTML(appointment.clientName)}
-            </strong>
-
-            <span class="client-phone">
-              ${escapeHTML(appointment.phone)}
-            </span>
-
-            ${
-              appointment.notes
-                ? `
-                  <span class="appointment-note">
-                    Nota: ${escapeHTML(appointment.notes)}
-                  </span>
-                `
-                : ""
-            }
-          </td>
-
-          <td>
-            ${escapeHTML(service.name)}
-
-            <span class="client-phone">
-              ${service.duration} min · $${service.price}
-            </span>
-          </td>
-
-          <td>
-            ${escapeHTML(barber.name)}
-          </td>
-
-          <td>
-            <span class="origin">
-              ${escapeHTML(
-                origins[appointment.origin] || "Otro"
+            <td>
+              ${formatDate(
+                appointment.date
               )}
-            </span>
-          </td>
+            </td>
 
-          <td>
-            ${renderStatus(appointment.status)}
-          </td>
+            <td>
+              <strong>
+                ${formatTime(
+                  appointment.time
+                )}
+              </strong>
+            </td>
 
-          <td>
-            <div class="table-actions">
-              ${renderActions(appointment)}
-            </div>
-          </td>
-        </tr>
-      `;
-    })
-    .join("");
+            <td>
+              <strong>
+                ${escapeHTML(
+                  appointment.clientName
+                )}
+              </strong>
+
+              <span class="client-phone">
+                ${escapeHTML(
+                  appointment.phone
+                )}
+              </span>
+
+              ${
+                appointment.notes
+                  ? `
+                    <span class="appointment-note">
+                      Nota:
+                      ${escapeHTML(
+                        appointment.notes
+                      )}
+                    </span>
+                  `
+                  : ""
+              }
+            </td>
+
+            <td>
+              ${escapeHTML(
+                service.name
+              )}
+
+              <span class="client-phone">
+                ${service.duration} min
+                · $${service.price}
+              </span>
+            </td>
+
+            <td>
+              ${escapeHTML(
+                barber.name
+              )}
+            </td>
+
+            <td>
+              <span class="origin">
+                ${escapeHTML(
+                  origins[
+                    appointment.origin
+                  ] || "Otro"
+                )}
+              </span>
+            </td>
+
+            <td>
+              ${renderStatus(
+                appointment.status
+              )}
+            </td>
+
+            <td>
+              <div class="table-actions">
+                ${renderActions(
+                  appointment
+                )}
+              </div>
+            </td>
+
+          </tr>
+        `;
+      }
+    ).join("");
 }
 
 /* =====================================================
@@ -800,7 +1184,9 @@ function renderAppointments() {
 ===================================================== */
 
 function renderActions(appointment) {
-  const id = escapeHTML(appointment.id);
+  const id = escapeHTML(
+    appointment.id
+  );
 
   switch (appointment.status) {
     case "pending":
@@ -875,51 +1261,84 @@ function renderActions(appointment) {
 }
 
 function handleTableAction(event) {
-  const button = event.target.closest("[data-action]");
-
-  if (!button) return;
-
-  const appointmentId = button.dataset.id;
-  const newStatus = button.dataset.action;
-
-  button.disabled = true;
-
-  updateStatus(appointmentId, newStatus)
-    .finally(() => {
-      if (button.isConnected) {
-        button.disabled = false;
-      }
-    });
-}
-
-async function updateStatus(appointmentId, newStatus) {
-  const appointment = firebaseAppointments.find(
-    item => item.id === appointmentId
+  const button = event.target.closest(
+    "[data-action]"
   );
 
-  if (!appointment) {
-    showToast("No se encontró la cita.");
+  if (!button) {
     return;
   }
 
-  if (appointment.status === newStatus) return;
+  const appointmentId =
+    button.dataset.id;
+
+  const newStatus =
+    button.dataset.action;
+
+  button.disabled = true;
+
+  updateStatus(
+    appointmentId,
+    newStatus
+  ).finally(
+    () => {
+      if (button.isConnected) {
+        button.disabled = false;
+      }
+    }
+  );
+}
+
+async function updateStatus(
+  appointmentId,
+  newStatus
+) {
+  const appointment =
+    firebaseAppointments.find(
+      item => item.id ===
+        appointmentId
+    );
+
+  if (!appointment) {
+    showToast(
+      "No se encontró la cita."
+    );
+
+    return;
+  }
+
+  if (
+    appointment.status ===
+    newStatus
+  ) {
+    return;
+  }
 
   const messages = {
     confirmed: "Cita confirmada.",
     cancelled: "Cita cancelada.",
-    "no-show": "Cita marcada como no asistió.",
+    "no-show":
+      "Cita marcada como no asistió.",
     completed: "Cita completada."
   };
 
   try {
-    if (newStatus === "cancelled") {
-      const confirmed = window.confirm(
-        `¿Cancelar la cita de ${appointment.clientName}?`
+    if (
+      newStatus === "cancelled"
+    ) {
+      const confirmed =
+        window.confirm(
+          `¿Cancelar la cita de ${appointment.clientName}?`
+        );
+
+      if (!confirmed) {
+        return;
+      }
+
+      await cancelAppointment(
+        appointmentId
       );
 
-      if (!confirmed) return;
-
-      await cancelAppointment(appointmentId);
     } else {
       await changeAppointmentStatus(
         appointmentId,
@@ -928,13 +1347,19 @@ async function updateStatus(appointmentId, newStatus) {
     }
 
     showToast(
-      messages[newStatus] || "Estado actualizado."
+      messages[newStatus] ||
+      "Estado actualizado."
     );
+
   } catch (error) {
-    console.error("Error al cambiar estado:", error);
+    console.error(
+      "Error al cambiar estado:",
+      error
+    );
 
     showToast(
-      error.message || "No se pudo actualizar la cita."
+      error.message ||
+      "No se pudo actualizar la cita."
     );
   }
 }
@@ -944,7 +1369,9 @@ async function updateStatus(appointmentId, newStatus) {
 ===================================================== */
 
 function getService(id) {
-  return services.find(service => service.id === id) || {
+  return services.find(
+    service => service.id === id
+  ) || {
     id,
     name: "Servicio no disponible",
     price: 0,
@@ -953,7 +1380,9 @@ function getService(id) {
 }
 
 function getBarber(id) {
-  return firebaseBarbers.find(barber => barber.id === id) || {
+  return firebaseBarbers.find(
+    barber => barber.id === id
+  ) || {
     id,
     name: "Barbero no disponible"
   };
@@ -968,9 +1397,13 @@ function renderStatus(status) {
     "no-show": "No asistió"
   };
 
-  const safeStatus = Object.hasOwn(labels, status)
-    ? status
-    : "pending";
+  const safeStatus =
+    Object.hasOwn(
+      labels,
+      status
+    )
+      ? status
+      : "pending";
 
   return `
     <span class="status ${safeStatus}">
@@ -980,10 +1413,24 @@ function renderStatus(status) {
 }
 
 function formatTime(time) {
-  if (!time) return "";
+  if (!time) {
+    return "";
+  }
 
-  const [hours, minutes] = time.split(":").map(Number);
-  const period = hours >= 12 ? "PM" : "AM";
+  const [hours, minutes] =
+    time.split(":").map(Number);
+
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes)
+  ) {
+    return "";
+  }
+
+  const period =
+    hours >= 12
+      ? "PM"
+      : "AM";
 
   return (
     `${hours % 12 || 12}:` +
@@ -992,37 +1439,68 @@ function formatTime(time) {
 }
 
 function formatDate(dateString) {
-  if (!dateString) return "";
+  if (!dateString) {
+    return "";
+  }
 
-  return new Intl.DateTimeFormat("es-MX", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric"
-  }).format(new Date(`${dateString}T12:00:00`));
+  return new Intl.DateTimeFormat(
+    "es-MX",
+    {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC"
+    }
+  ).format(
+    new Date(
+      `${dateString}T12:00:00Z`
+    )
+  );
 }
 
 function escapeHTML(value) {
-  const element = document.createElement("div");
-  element.textContent = String(value ?? "");
+  const element =
+    document.createElement(
+      "div"
+    );
+
+  element.textContent =
+    String(value ?? "");
+
   return element.innerHTML;
 }
 
 function showToast(message) {
-  const toast = document.getElementById("toast");
+  const toast =
+    document.getElementById(
+      "toast"
+    );
 
   if (!toast) {
     console.warn(message);
     return;
   }
 
-  toast.textContent = message;
-  toast.classList.add("show");
+  toast.textContent =
+    message;
 
-  clearTimeout(toastTimer);
+  toast.classList.add(
+    "show"
+  );
 
-  toastTimer = setTimeout(() => {
-    toast.classList.remove("show");
-  }, 2800);
+  clearTimeout(
+    toastTimer
+  );
+
+  toastTimer =
+    setTimeout(
+      () => {
+        toast.classList.remove(
+          "show"
+        );
+      },
+      2800
+    );
 }
 
 /* =====================================================

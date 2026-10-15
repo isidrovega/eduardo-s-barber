@@ -1,0 +1,323 @@
+
+/* =====================================================
+   EDUARDO'S BARBERSHOP
+   CALENDARIO DE CITAS DEL ADMINISTRADOR
+===================================================== */
+
+.appointment-calendar-panel {
+    margin: 24px 0;
+    padding: 24px;
+    background: var(--card-bg, #fff);
+    border: 1px solid rgba(0, 0, 0, 0.09);
+    border-radius: 18px;
+    min-width: 0;
+}
+
+.appointment-calendar-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    margin-bottom: 22px;
+}
+
+.appointment-calendar-heading h2 {
+    margin: 0 0 6px;
+    font-size: 21px;
+}
+
+.appointment-calendar-heading p {
+    margin: 0;
+    opacity: 0.7;
+    font-size: 14px;
+}
+
+.calendar-count {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.06);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.appointment-calendar-filters {
+    display: grid;
+    grid-template-columns: minmax(170px, 1.3fr) repeat(2, minmax(145px, 1fr)) auto;
+    gap: 14px;
+    align-items: end;
+}
+
+.appointment-calendar-filters .field {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    min-width: 0;
+}
+
+.appointment-calendar-filters label {
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.appointment-calendar-filters input,
+.appointment-calendar-filters select {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid #d8d8d8;
+    border-radius: 9px;
+    background: #fff;
+    color: #222;
+    font: inherit;
+}
+
+.calendar-filter-actions {
+    display: flex;
+    align-items: end;
+}
+
+.calendar-filter-actions button {
+    min-height: 44px;
+    white-space: nowrap;
+}
+
+.calendar-filter-message {
+    margin: 12px 0;
+    font-size: 13px;
+    color: #a43a2a;
+}
+
+.calendar-filter-message:empty {
+    display: none;
+}
+
+.appointment-calendar-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px 18px;
+    margin: 20px 0 16px;
+}
+
+.appointment-calendar-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    opacity: 0.85;
+}
+
+.calendar-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.calendar-dot.pending {
+    background: #d59b23;
+}
+
+.calendar-dot.confirmed {
+    background: #2586c8;
+}
+
+.calendar-dot.completed {
+    background: #2c9965;
+}
+
+.calendar-dot.cancelled {
+    background: #cb5454;
+}
+
+.calendar-dot.no-show {
+    background: #888;
+}
+
+.appointment-calendar {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    min-width: 0;
+}
+
+.calendar-month {
+    min-width: 0;
+}
+
+.calendar-month-title {
+    margin: 0 0 12px;
+    font-size: 18px;
+    text-transform: capitalize;
+}
+
+.calendar-weekdays,
+.calendar-days {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 7px;
+}
+
+.calendar-weekdays {
+    margin-bottom: 7px;
+}
+
+.calendar-weekdays span {
+    padding: 8px 4px;
+    text-align: center;
+    font-size: 12px;
+    font-weight: 700;
+    opacity: 0.65;
+}
+
+.calendar-day {
+    min-width: 0;
+    min-height: 110px;
+    padding: 9px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 11px;
+    background: rgba(128, 128, 128, 0.035);
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+}
+
+.calendar-day.is-today {
+    border: 2px solid #b68a45;
+}
+
+.calendar-day-number {
+    display: block;
+    margin-bottom: 9px;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.calendar-day-empty {
+    min-height: 110px;
+}
+
+.calendar-day-outside {
+    opacity: 0.35;
+    background: rgba(128, 128, 128, 0.04);
+}
+
+.calendar-appointment {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px;
+    margin-top: 6px;
+    border-radius: 8px;
+    border-left: 3px solid #999;
+    background: rgba(128, 128, 128, 0.08);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.calendar-appointment strong {
+    font-size: 12px;
+}
+
+.calendar-appointment .calendar-client {
+    font-weight: 600;
+}
+
+.calendar-appointment .calendar-barber {
+    opacity: 0.75;
+}
+
+.calendar-appointment.pending {
+    border-left-color: #d59b23;
+}
+
+.calendar-appointment.confirmed {
+    border-left-color: #2586c8;
+}
+
+.calendar-appointment.completed {
+    border-left-color: #2c9965;
+}
+
+.calendar-appointment.cancelled {
+    border-left-color: #cb5454;
+    opacity: 0.65;
+}
+
+.calendar-appointment.no-show {
+    border-left-color: #888;
+    opacity: 0.7;
+}
+
+.calendar-empty-state {
+    padding: 35px 15px;
+    text-align: center;
+    opacity: 0.7;
+}
+
+@media (max-width: 1100px) {
+    .appointment-calendar-filters {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 700px) {
+    .appointment-calendar-panel {
+        padding: 14px;
+        margin: 18px 0;
+    }
+
+    .appointment-calendar-heading {
+        flex-direction: column;
+    }
+
+    .appointment-calendar-filters {
+        grid-template-columns: 1fr;
+    }
+
+    .calendar-filter-actions button {
+        width: 100%;
+    }
+
+    .calendar-weekdays,
+    .calendar-days {
+        gap: 3px;
+    }
+
+    .calendar-weekdays span {
+        font-size: 10px;
+        padding: 6px 1px;
+    }
+
+    .calendar-day,
+    .calendar-day-empty {
+        min-height: 76px;
+    }
+
+    .calendar-day {
+        padding: 4px;
+        border-radius: 6px;
+    }
+
+    .calendar-day-number {
+        font-size: 11px;
+        margin-bottom: 4px;
+    }
+
+    .calendar-appointment {
+        padding: 4px;
+        margin-top: 3px;
+        font-size: 9px;
+        border-left-width: 2px;
+    }
+
+    .calendar-appointment strong {
+        font-size: 10px;
+    }
+
+    .calendar-appointment .calendar-barber {
+        display: none;
+    }
+}
+
