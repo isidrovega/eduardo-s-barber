@@ -151,6 +151,259 @@
                 flex-direction: column;
             }
         }
+
+
+.barber-calendar {
+    margin-top: 20px;
+    color: #f5f0e6;
+}
+
+.calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.calendar-title {
+    margin: 0;
+    font-size: 20px;
+    text-transform: capitalize;
+}
+
+.calendar-nav {
+    width: 40px;
+    height: 40px;
+    border: 1px solid #b99652;
+    border-radius: 10px;
+    background: #171717;
+    color: #d8b66d;
+    font-size: 26px;
+    cursor: pointer;
+}
+
+.calendar-weekdays,
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.calendar-weekdays {
+    margin-bottom: 8px;
+}
+
+.calendar-weekday {
+    text-align: center;
+    color: #b99652;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.calendar-blank {
+    min-height: 48px;
+}
+
+.calendar-date {
+    position: relative;
+    min-height: 58px;
+    padding: 8px 4px;
+    border: 1px solid #343434;
+    border-radius: 10px;
+    background: #1b1b1b;
+    color: #f5f0e6;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.calendar-date:hover {
+    border-color: #b99652;
+}
+
+.calendar-date.is-today {
+    border-color: #b99652;
+}
+
+.calendar-date.is-selected {
+    background: #b99652;
+    color: #111;
+    font-weight: 700;
+}
+
+.calendar-count {
+    display: block;
+    width: fit-content;
+    min-width: 18px;
+    margin: 4px auto 0;
+    padding: 1px 4px;
+    border-radius: 8px;
+    background: #5e4824;
+    color: white;
+    font-size: 10px;
+}
+
+.calendar-day-title {
+    margin: 26px 0 14px;
+    color: #d8b66d;
+    font-size: 18px;
+}
+
+.calendar-appointments {
+    display: grid;
+    gap: 10px;
+}
+
+.calendar-appointment {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid #363636;
+    border-radius: 10px;
+    background: #191919;
+}
+
+.calendar-appointment-time {
+    color: #d8b66d;
+}
+
+.calendar-appointment-name {
+    font-weight: 600;
+}
+
+.calendar-appointment-details {
+    width: 100%;
+    color: #aaa;
+}
+
+.calendar-empty,
+.calendar-message {
+    color: #aaa;
+    font-size: 14px;
+}
+
+@media (max-width: 480px) {
+    .calendar-date {
+        min-height: 46px;
+        font-size: 13px;
+    }
+
+    .calendar-weekdays,
+    .calendar-grid {
+        gap: 3px;
+    }
+}
+
+.calendar-appointment-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+    margin-top: 8px;
+}
+
+.calendar-action-button {
+    padding: 9px 14px;
+    border: 1px solid #b99652;
+    border-radius: 8px;
+    background: #262016;
+    color: #e3c383;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.calendar-action-button:hover {
+    background: #3b2d17;
+}
+
+.calendar-action-danger {
+    border-color: #a65353;
+    background: #321d1d;
+    color: #f1a7a7;
+}
+
+.calendar-action-danger:hover {
+    background: #4a2525;
+}
+
+
+
+.appointment-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+#appointmentEditorSection label {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: #d8b66d;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#appointmentEditorSection input,
+#appointmentEditorSection select,
+#appointmentEditorSection textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #444;
+    border-radius: 9px;
+    background: #181818;
+    color: #fff;
+    font: inherit;
+    box-sizing: border-box;
+}
+
+#appointmentEditorSection textarea {
+    resize: vertical;
+}
+
+.appointment-form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.appointment-form-actions button {
+    padding: 12px 18px;
+    border: 1px solid #b99652;
+    border-radius: 9px;
+    background: #b99652;
+    color: #111;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+#resetBarberAppointmentButton {
+    background: transparent;
+    color: #d8b66d;
+}
+
+.appointment-form-actions button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+#barberAppointmentMessage {
+    min-height: 22px;
+    margin-top: 14px;
+    color: #d8b66d;
+}
+
+@media (max-width: 600px) {
+    .appointment-form-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
     </style>
 </head>
 
@@ -206,6 +459,119 @@
                     <h3>Mi horario</h3>
                     <div id="scheduleList"></div>
                 </article>
+
+                <section class="card" aria-labelledby="calendarHeading">
+    <h2 id="calendarHeading">Mi calendario de citas</h2>
+    <div id="barberCalendar"></div>
+</section>
+
+<section class="card" id="appointmentEditorSection">
+    <h2 id="appointmentEditorTitle">Agendar cita</h2>
+
+    <form id="barberAppointmentForm">
+        <input
+            type="hidden"
+            id="barberAppointmentId"
+        >
+
+        <div class="appointment-form-grid">
+            <label>
+                Nombre del cliente
+                <input
+                    id="barberClientName"
+                    type="text"
+                    maxlength="120"
+                    required
+                >
+            </label>
+
+            <label>
+                Teléfono
+                <input
+                    id="barberClientPhone"
+                    type="tel"
+                    maxlength="40"
+                >
+            </label>
+
+            <label>
+                Servicio
+                <select
+                    id="barberServiceId"
+                    required
+                >
+                    <option value="">Selecciona un servicio</option>
+                </select>
+            </label>
+
+            <label>
+                Fecha
+                <input
+                    id="barberAppointmentDate"
+                    type="date"
+                    required
+                >
+            </label>
+
+            <label>
+                Hora
+                <select
+                    id="barberAppointmentTime"
+                    required
+                >
+                    <option value="">Selecciona una hora</option>
+                </select>
+            </label>
+
+            <label>
+                Origen
+                <select id="barberAppointmentOrigin">
+                    <option value="phone">Teléfono</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="instagram">Instagram</option>
+                    <option value="facebook">Facebook</option>
+                    <option value="walk-in">En persona</option>
+                </select>
+            </label>
+        </div>
+
+        <label>
+            Notas
+            <textarea
+                id="barberAppointmentNotes"
+                maxlength="1000"
+                rows="3"
+            ></textarea>
+        </label>
+
+        <div class="appointment-form-actions">
+            <button
+                type="submit"
+                id="saveBarberAppointmentButton"
+            >
+                Guardar cita
+            </button>
+
+            <button
+                type="button"
+                id="resetBarberAppointmentButton"
+            >
+                Nueva cita
+            </button>
+        </div>
+
+        <p
+            id="barberAppointmentMessage"
+            role="status"
+            aria-live="polite"
+        ></p>
+    </form>
+</section>
+
+
+</section>
+
+
 
                 <article class="card">
                     <h3>Cambiar contraseña</h3>
@@ -294,6 +660,16 @@
             doc,
             getDoc
         } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+        import { mountBarberCalendar } from "./js/barber-calendar.js";
+
+        import {
+    cancelAppointment
+} from "./js/appointment-booking.js";
+
+import {
+    initializeBarberAppointmentForm
+} from "./js/barber-appointment-form.js";
 
         const loadingSection =
             document.getElementById("loadingSection");
@@ -404,6 +780,18 @@
                 }
 
                 const barber = barberSnapshot.data();
+
+                initializeBarberAppointmentForm(barber);
+
+                const calendarContainer =
+    document.getElementById("barberCalendar");
+
+if (calendarContainer) {
+    mountBarberCalendar(
+        calendarContainer,
+        profile.barberId
+    );
+}
 
                 document.getElementById(
                     "welcomeTitle"
@@ -550,6 +938,49 @@
         ).addEventListener("click", loadPanel);
 
         loadPanel();
+
+
+const barberCalendarElement =
+    document.getElementById("barberCalendar");
+
+if (barberCalendarElement) {
+    barberCalendarElement.addEventListener(
+        "appointment:cancel",
+        async event => {
+            const appointment = event.detail?.appointment;
+
+            if (!appointment?.id) {
+                alert("No se pudo identificar la cita.");
+                return;
+            }
+
+            const confirmed = window.confirm(
+                `¿Cancelar la cita de ${appointment.clientName} ` +
+                `del ${appointment.date} a las ${appointment.time}?`
+            );
+
+            if (!confirmed) {
+                return;
+            }
+
+            try {
+                await cancelAppointment(appointment.id);
+
+                alert("La cita se canceló correctamente.");
+            } catch (error) {
+                console.error(
+                    "Error al cancelar la cita:",
+                    error
+                );
+
+                alert(
+                    error.message ||
+                    "No se pudo cancelar la cita."
+                );
+            }
+        }
+    );
+}
     </script>
 </body>
 </html>
