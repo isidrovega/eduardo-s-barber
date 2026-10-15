@@ -459,17 +459,19 @@ function cleanBookingURL() {
    MODAL
 ===================================================== */
 
-function openModal() {
-  resetForm();
+async function openModal() {
+  try {
+    await resetForm();
 
-  modal.classList.remove(
-    "hidden"
-  );
+    modal.classList.remove("hidden");
 
-  setTimeout(
-    () => phoneInput.focus(),
-    50
-  );
+    setTimeout(() => {
+      phoneInput.focus();
+    }, 50);
+  } catch (error) {
+    console.error("Error al abrir nueva cita:", error);
+    showToast("No se pudo abrir el formulario de citas.");
+  }
 }
 
 function closeModal() {
@@ -480,7 +482,7 @@ function closeModal() {
   );
 }
 
-function resetForm() {
+async function resetForm() {
   ++customerLookupVersion;
 
   phoneInput.value = "";
@@ -497,18 +499,60 @@ function resetForm() {
   dateInput.min = getLocalDate();
   dateInput.value = getLocalDate();
 
-  const firstActiveBarber =
-    firebaseBarbers.find(
-      barber => barber.status === "active"
+  const firstActiveBarber = firebaseBarbers.find(
+    barber => barber.status === "active"
+  );
+
+  barberSelect.value = firstActiveBarber?.id || "";
+
+  serviceSelect.replaceChildren(
+    new Option("Cargando servicios...", "")
+  );
+
+  serviceSelect.disabled = true;
+
+  try {
+    const [services, snapshot] = await Promise.all([
+      getServices(),
+      getDocs(collection(db, "barbers"))
+    ]);
+
+    firebaseServices = services;
+
+    firebaseBarbers = snapshot.docs
+      .map(document => ({
+        ...document.data(),
+        id: document.id
+      }))
+      .sort((a, b) =>
+        (a.name || "").localeCompare(b.name || "", "es")
+      );
+
+    const selectedBarber = firebaseBarbers.find(
+      barber => barber.id === barberSelect.value
     );
 
-  barberSelect.value =
-    firstActiveBarber?.id || "";
+    if (!selectedBarber || selectedBarber.status !== "active") {
+      barberSelect.value =
+        firebaseBarbers.find(
+          barber => barber.status === "active"
+        )?.id || "";
+    }
 
-  updateServiceOptions();
+    updateServiceOptions();
+  } catch (error) {
+    console.error("Error al actualizar servicios:", error);
+
+    serviceSelect.replaceChildren(
+      new Option("Error al cargar servicios", "")
+    );
+
+    showToast("No se pudieron actualizar los servicios.");
+  } finally {
+    serviceSelect.disabled = false;
+  }
 
   selectedTime = "";
-
   renderTimes();
 }
 
