@@ -4197,3 +4197,47 @@ body.modal-open {
             36px minmax(0, 1fr) 38px;
     }
 }
+/* Modal de edición de barberos */
+
+.barber-modern-modal {
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+    max-height: 90dvh;
+    overflow: hidden;
+}
+
+.barber-modern-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.barber-modal-hero,
+.barber-modern-footer {
+    flex-shrink: 0;
+}
+
+#barberAccountSection {
+    position: static;
+    width: 100%;
+    margin-top: 24px;
+    box-sizing: border-box;
+}
+
+/* Respetar el atributo hidden */
+#barberAccountSection[hidden] {
+    display: none !important;
+}
+
+@media (max-width: 768px) {
+    .barber-modern-modal {
+        max-height: 95vh;
+        max-height: 95dvh;
+    }
+
+    #barberAccountSection {
+        margin-top: 20px;
+    }
+}

@@ -25,13 +25,6 @@ function getFirebaseAdmin() {
     .replace(/\\n/g, "\n")
     .trim();
 
-    console.log("Diagnóstico de clave Firebase:", {
-    tieneInicio: privateKey.startsWith("-----BEGIN PRIVATE KEY-----"),
-    tieneFinal: privateKey.endsWith("-----END PRIVATE KEY-----"),
-    lineas: privateKey.split("\n").length,
-    contieneSaltosLiterales: privateKey.includes("\\n")
-});
-
     if (!projectId || !clientEmail || !privateKey) {
         throw new Error(
             "Faltan las credenciales privadas de Firebase."
