@@ -1,16 +1,31 @@
-import { services as defaultServices } from "./data.js";
-import { getAppointments, generateId } from "./storage.js";
 
+import {
+    getServices,
+    saveService as saveServiceToFirestore,
+    getAppointments,
+    generateId
+} from "./firestore-storage.js";
 
 /* =========================================================
-   CONFIG
+   EDUARDO'S BARBERSHOP
+   SERVICES.JS
+
+   - Firebase Firestore como fuente de datos.
+   - Sin localStorage.
+   - Sin servicios predeterminados.
+   - Conserva el diseño original.
 ========================================================= */
 
-const STORAGE_KEY = "barbershop_services";
+/* =========================================================
+   ESTADO
+========================================================= */
+
+let servicesData = [];
+let appointmentsData = [];
 
 let editingServiceId = null;
+let savingService = false;
 let toastTimer = null;
-
 
 /* =========================================================
    DOM
@@ -52,68 +67,51 @@ const cancelServiceButton =
 const saveServiceButton =
     document.getElementById("saveServiceButton");
 
-
 /* =========================================================
-   INITIALIZATION
+   INICIALIZACIÓN
 ========================================================= */
 
-
-function initialize() {
+async function initialize() {
     configureEvents();
-    renderAll();
+    await loadData();
 }
 
-
-
 /* =========================================================
-   STORAGE
+   CARGAR DATOS DESDE FIRESTORE
 ========================================================= */
 
-function getServices() {
+async function loadData() {
     try {
-        const stored = JSON.parse(
-            localStorage.getItem(STORAGE_KEY)
+        const [services, appointments] =
+            await Promise.all([
+                getServices(),
+                getAppointments()
+            ]);
+
+        servicesData = services;
+        appointmentsData = appointments;
+
+        renderAll();
+
+        console.info(
+            "Servicios cargados desde Firebase:",
+            servicesData.length
         );
 
-        return Array.isArray(stored)
-            ? stored
-            : [];
-    } catch {
-        return [];
+    } catch (error) {
+        console.error(
+            "Error cargando servicios desde Firebase:",
+            error
+        );
+
+        showToast(
+            "No se pudieron cargar los servicios de Firebase."
+        );
     }
 }
 
-
-function saveServices(services) {
-    localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(services)
-    );
-}
-
-
 /* =========================================================
-   SEED
-========================================================= */
-
-function seedServices() {
-    if (localStorage.getItem(STORAGE_KEY)) {
-        return;
-    }
-
-    const initialServices =
-        defaultServices.map(service => ({
-            ...service,
-            status: "active",
-            createdAt: new Date().toISOString()
-        }));
-
-    saveServices(initialServices);
-}
-
-
-/* =========================================================
-   EVENTS
+   EVENTOS
 ========================================================= */
 
 function configureEvents() {
@@ -134,7 +132,9 @@ function configureEvents() {
 
     saveServiceButton.addEventListener(
         "click",
-        saveService
+        () => {
+            void saveCurrentService();
+        }
     );
 
     servicesGrid.addEventListener(
@@ -169,9 +169,8 @@ function configureEvents() {
     );
 }
 
-
 /* =========================================================
-   RENDER ALL
+   RENDERIZADO GENERAL
 ========================================================= */
 
 function renderAll() {
@@ -179,23 +178,17 @@ function renderAll() {
     renderServices();
 }
 
-
 /* =========================================================
-   SUMMARY
+   RESUMEN
 ========================================================= */
 
 function renderSummary() {
-    const services = getServices();
-    const appointments = getAppointments();
-
-    const activeServices =
-        services.filter(
-            service =>
-                service.status === "active"
-        );
+    const activeServices = servicesData.filter(
+        service => service.status === "active"
+    );
 
     const completedAppointments =
-        appointments.filter(
+        appointmentsData.filter(
             appointment =>
                 appointment.status === "completed"
         );
@@ -203,12 +196,10 @@ function renderSummary() {
     const revenue =
         completedAppointments.reduce(
             (total, appointment) => {
-                const service =
-                    services.find(
-                        item =>
-                            item.id ===
-                            appointment.serviceId
-                    );
+                const service = servicesData.find(
+                    item =>
+                        item.id === appointment.serviceId
+                );
 
                 return total +
                     Number(service?.price || 0);
@@ -218,7 +209,7 @@ function renderSummary() {
 
     serviceSummary.innerHTML = `
         <div class="module-summary-item">
-            <strong>${services.length}</strong>
+            <strong>${servicesData.length}</strong>
             <span>Servicios</span>
         </div>
 
@@ -245,16 +236,12 @@ function renderSummary() {
     `;
 }
 
-
 /* =========================================================
-   SERVICES
+   LISTA DE SERVICIOS
 ========================================================= */
 
 function renderServices() {
-    const services = getServices();
-    const appointments = getAppointments();
-
-    if (!services.length) {
+    if (!servicesData.length) {
         servicesGrid.innerHTML = `
             <div class="module-empty-state">
                 <div class="module-empty-icon">
@@ -289,32 +276,30 @@ function renderServices() {
         return;
     }
 
-    servicesGrid.innerHTML =
-        services
-            .map(service => {
-                const completed =
-                    appointments.filter(
-                        appointment =>
-                            appointment.serviceId === service.id &&
-                            appointment.status === "completed"
-                    );
-
-                const revenue =
-                    completed.length *
-                    Number(service.price || 0);
-
-                return createServiceCard(
-                    service,
-                    completed.length,
-                    revenue
+    servicesGrid.innerHTML = servicesData
+        .map(service => {
+            const completed =
+                appointmentsData.filter(
+                    appointment =>
+                        appointment.serviceId === service.id &&
+                        appointment.status === "completed"
                 );
-            })
-            .join("");
+
+            const revenue =
+                completed.length *
+                Number(service.price || 0);
+
+            return createServiceCard(
+                service,
+                completed.length,
+                revenue
+            );
+        })
+        .join("");
 }
 
-
 /* =========================================================
-   SERVICE CARD
+   TARJETA DE SERVICIO
 ========================================================= */
 
 function createServiceCard(
@@ -332,17 +317,13 @@ function createServiceCard(
                 ${isActive ? "" : "is-inactive"}
             "
         >
-
             <div class="unified-card-header">
-
                 <div class="unified-card-person">
-
                     <div class="unified-card-avatar">
                         ✂
                     </div>
 
                     <div class="unified-card-title">
-
                         <h3>
                             ${escapeHTML(service.name)}
                         </h3>
@@ -350,11 +331,8 @@ function createServiceCard(
                         <span>
                             Servicio
                         </span>
-
                     </div>
-
                 </div>
-
 
                 <div
                     class="
@@ -370,41 +348,28 @@ function createServiceCard(
                             : "Inactivo"
                     }
                 </div>
-
             </div>
 
-
             <div class="unified-card-metrics">
-
                 <div>
-                    <span>
-                        Precio
-                    </span>
+                    <span>Precio</span>
 
                     <strong>
                         ${formatMoney(service.price)}
                     </strong>
                 </div>
 
-
                 <div>
-                    <span>
-                        Duración
-                    </span>
+                    <span>Duración</span>
 
                     <strong>
                         ${Number(service.duration)} min
                     </strong>
                 </div>
-
             </div>
 
-
             <div class="unified-card-detail">
-
-                <span>
-                    Actividad
-                </span>
+                <span>Actividad</span>
 
                 <strong>
                     ${completedCount}
@@ -419,12 +384,9 @@ function createServiceCard(
                     ${formatMoney(revenue)}
                     generados
                 </small>
-
             </div>
 
-
             <div class="unified-card-footer">
-
                 <span>
                     ${
                         isActive
@@ -432,7 +394,6 @@ function createServiceCard(
                             : "No disponible para citas"
                     }
                 </span>
-
 
                 <button
                     type="button"
@@ -443,42 +404,31 @@ function createServiceCard(
                     Editar
                     <span>→</span>
                 </button>
-
             </div>
-
         </article>
     `;
 }
 
-
 /* =========================================================
-   CARD ACTION
+   ACCIONES DE TARJETAS
 ========================================================= */
 
 function handleServiceAction(event) {
-    const button =
-        event.target.closest(
-            "[data-action]"
-        );
+    const button = event.target.closest(
+        "[data-action]"
+    );
 
     if (!button) {
         return;
     }
 
-    const action =
-        button.dataset.action;
-
-    const id =
-        button.dataset.id;
-
-    if (action === "edit") {
-        openEditService(id);
+    if (button.dataset.action === "edit") {
+        openEditService(button.dataset.id);
     }
 }
 
-
 /* =========================================================
-   NEW SERVICE
+   NUEVO SERVICIO
 ========================================================= */
 
 function openNewService() {
@@ -488,46 +438,34 @@ function openNewService() {
         "Nuevo servicio";
 
     serviceName.value = "";
-
     servicePrice.value = "";
-
     serviceDuration.value = "30";
-
     serviceActiveSwitch.checked = true;
 
     openModal();
 }
 
-
 /* =========================================================
-   EDIT SERVICE
+   EDITAR SERVICIO
 ========================================================= */
 
 function openEditService(id) {
-    const service =
-        getServices().find(
-            item => item.id === id
-        );
+    const service = servicesData.find(
+        item => item.id === id
+    );
 
     if (!service) {
         showToast(
             "No se encontró el servicio."
         );
-
         return;
     }
 
-    editingServiceId =
-        service.id;
+    editingServiceId = service.id;
 
-    serviceName.value =
-        service.name;
-
-    servicePrice.value =
-        service.price;
-
-    serviceDuration.value =
-        service.duration;
+    serviceName.value = service.name;
+    servicePrice.value = service.price;
+    serviceDuration.value = service.duration;
 
     serviceActiveSwitch.checked =
         service.status === "active";
@@ -537,7 +475,6 @@ function openEditService(id) {
 
     openModal();
 }
-
 
 /* =========================================================
    MODAL
@@ -552,16 +489,16 @@ function openModal() {
         "modal-open"
     );
 
-    setTimeout(
-        () => {
-            serviceName.focus();
-        },
-        50
-    );
+    setTimeout(() => {
+        serviceName.focus();
+    }, 50);
 }
 
-
 function closeModal() {
+    if (savingService) {
+        return;
+    }
+
     serviceModal.classList.add(
         "hidden"
     );
@@ -573,9 +510,8 @@ function closeModal() {
     editingServiceId = null;
 }
 
-
 /* =========================================================
-   UPDATE MODAL TITLE
+   TÍTULO DEL MODAL
 ========================================================= */
 
 function updateModalTitle() {
@@ -583,27 +519,28 @@ function updateModalTitle() {
         return;
     }
 
-    const name =
-        serviceName.value.trim();
+    const name = serviceName.value.trim();
 
     serviceModalTitle.textContent =
         name || "Editar servicio";
 }
 
-
 /* =========================================================
-   SAVE SERVICE
+   GUARDAR SERVICIO EN FIRESTORE
 ========================================================= */
 
-function saveService() {
-    const name =
-        serviceName.value.trim();
+async function saveCurrentService() {
+    if (savingService) {
+        return;
+    }
 
-    const price =
-        Number(servicePrice.value);
+    const name = serviceName.value.trim();
 
-    const duration =
-        Number(serviceDuration.value);
+    const priceText = servicePrice.value.trim();
+    const durationText = serviceDuration.value.trim();
+
+    const price = Number(priceText);
+    const duration = Number(durationText);
 
     if (!name) {
         showToast(
@@ -611,11 +548,11 @@ function saveService() {
         );
 
         serviceName.focus();
-
         return;
     }
 
     if (
+        !priceText ||
         !Number.isFinite(price) ||
         price < 0
     ) {
@@ -624,11 +561,11 @@ function saveService() {
         );
 
         servicePrice.focus();
-
         return;
     }
 
     if (
+        !durationText ||
         !Number.isFinite(duration) ||
         duration < 5
     ) {
@@ -637,22 +574,17 @@ function saveService() {
         );
 
         serviceDuration.focus();
-
         return;
     }
 
-    const services =
-        getServices();
-
-    const duplicate =
-        services.find(
-            service =>
-                service.id !== editingServiceId &&
-                service.name
-                    .trim()
-                    .toLowerCase() ===
-                    name.toLowerCase()
-        );
+    const duplicate = servicesData.find(
+        service =>
+            service.id !== editingServiceId &&
+            service.name
+                .trim()
+                .toLowerCase() ===
+                name.toLowerCase()
+    );
 
     if (duplicate) {
         showToast(
@@ -660,7 +592,6 @@ function saveService() {
         );
 
         serviceName.focus();
-
         return;
     }
 
@@ -669,76 +600,83 @@ function saveService() {
             ? "active"
             : "inactive";
 
-    if (editingServiceId) {
-        const service =
-            services.find(
-                item =>
-                    item.id ===
-                    editingServiceId
-            );
+    const previous = editingServiceId
+        ? servicesData.find(
+            service =>
+                service.id === editingServiceId
+        )
+        : null;
 
-        if (!service) {
-            showToast(
-                "No se encontró el servicio."
-            );
-
-            return;
-        }
-
-        service.name =
-            name;
-
-        service.price =
-            price;
-
-        service.duration =
-            duration;
-
-        service.status =
-            status;
-
-        service.updatedAt =
-            new Date().toISOString();
-
-        saveServices(services);
-
-        closeModal();
-
-        renderAll();
-
+    if (editingServiceId && !previous) {
         showToast(
-            "Servicio actualizado correctamente."
+            "No se encontró el servicio."
         );
-
         return;
     }
 
-    const newService = {
-        id: generateId("service"),
+    const isEditing = Boolean(previous);
+
+    const now = new Date().toISOString();
+
+    const record = {
+        ...(previous || {}),
+        id: previous?.id || generateId("service"),
         name,
         price,
         duration,
         status,
-        createdAt:
-            new Date().toISOString()
+        createdAt: previous?.createdAt || now,
+        updatedAt: now
     };
 
-    services.push(newService);
+    savingService = true;
 
-    saveServices(services);
+    saveServiceButton.disabled = true;
 
-    closeModal();
+    const originalButtonText =
+        saveServiceButton.textContent;
 
-    renderAll();
+    saveServiceButton.textContent =
+        "Guardando...";
 
-    showToast(
-        "Servicio agregado correctamente."
-    );
+    try {
+        await saveServiceToFirestore(record);
+
+        servicesData = await getServices();
+
+        savingService = false;
+
+        closeModal();
+        renderAll();
+
+        showToast(
+            isEditing
+                ? "Servicio actualizado en Firebase."
+                : "Servicio agregado a Firebase."
+        );
+
+    } catch (error) {
+        console.error(
+            "Error guardando servicio en Firestore:",
+            error
+        );
+
+        showToast(
+            "No se pudo guardar el servicio en Firebase."
+        );
+
+    } finally {
+        savingService = false;
+
+        saveServiceButton.disabled = false;
+
+        saveServiceButton.textContent =
+            originalButtonText;
+    }
 }
 
-
 /* =========================================================
-   MONEY
+   FORMATO DE DINERO
 ========================================================= */
 
 function formatMoney(value) {
@@ -754,9 +692,8 @@ function formatMoney(value) {
     );
 }
 
-
 /* =========================================================
-   ESCAPE HTML
+   ESCAPAR HTML
 ========================================================= */
 
 function escapeHTML(value) {
@@ -769,39 +706,31 @@ function escapeHTML(value) {
     return element.innerHTML;
 }
 
-
 /* =========================================================
-   TOAST
+   NOTIFICACIONES
 ========================================================= */
 
 function showToast(message) {
     const toast =
         document.getElementById("toast");
 
-    toast.textContent =
-        message;
+    if (!toast) {
+        console.info(message);
+        return;
+    }
 
-    toast.classList.add(
-        "show"
-    );
+    toast.textContent = message;
+    toast.classList.add("show");
 
     clearTimeout(toastTimer);
 
-    toastTimer =
-        setTimeout(
-            () => {
-                toast.classList.remove(
-                    "show"
-                );
-            },
-            2800
-        );
+    toastTimer = setTimeout(() => {
+        toast.classList.remove("show");
+    }, 2800);
 }
 
-
 /* =========================================================
-   START
+   INICIAR
 ========================================================= */
 
-initialize();
-
+void initialize();

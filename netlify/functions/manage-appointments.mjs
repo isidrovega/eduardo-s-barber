@@ -28,18 +28,6 @@ const BUSINESS_TIME_ZONE = "America/Mazatlan";
 const SLOT_MINUTES = 15;
 const START_INTERVAL_MINUTES = 30;
 
-const SERVICES = Object.freeze({
-    cut: {
-        duration: 30
-    },
-    "cut-beard": {
-        duration: 45
-    },
-    beard: {
-        duration: 20
-    }
-});
-
 const DAYS = [
     "sunday",
     "monday",
@@ -542,7 +530,7 @@ function assertCanManage(identity, appointment) {
    DATOS DE LA CITA
 ===================================================== */
 
-function normalizeAppointment(input, identity) {
+function normalizeAppointment(input, identity, service) {
     if (
         !input ||
         typeof input !== "object" ||
@@ -590,13 +578,28 @@ function normalizeAppointment(input, identity) {
 
     const serviceId = input.serviceId;
 
+    requireValidId(serviceId, "Servicio");
+
     if (
-        typeof serviceId !== "string" ||
-        !Object.hasOwn(SERVICES, serviceId)
+        !service ||
+        service.status !== "active"
     ) {
         throw new AppError(
             400,
-            "El servicio seleccionado no es válido."
+            "El servicio no existe o está inactivo."
+        );
+    }
+
+    const duration = Number(service.duration);
+
+    if (
+        !Number.isInteger(duration) ||
+        duration < 5 ||
+        duration > 480
+    ) {
+        throw new AppError(
+            400,
+            "La duración del servicio no es válida."
         );
     }
 
@@ -615,7 +618,7 @@ function normalizeAppointment(input, identity) {
         serviceId,
         date,
         time,
-        duration: SERVICES[serviceId].duration
+        duration
     };
 }
 
@@ -699,9 +702,31 @@ async function createAppointment(
     identity,
     input
 ) {
+    if (
+        !input ||
+        typeof input !== "object" ||
+        Array.isArray(input)
+    ) {
+        throw new AppError(
+            400,
+            "Los datos de la cita no son válidos."
+        );
+    }
+
+    const serviceId = requireValidId(
+        input.serviceId,
+        "Servicio"
+    );
+
+    const serviceSnap = await db
+        .collection("services")
+        .doc(serviceId)
+        .get();
+
     const appointment = normalizeAppointment(
         input,
-        identity
+        identity,
+        serviceSnap.exists ? serviceSnap.data() : null
     );
 
     validateFutureAppointment(appointment);
@@ -864,19 +889,36 @@ async function updateAppointment(
             );
         }
 
+        const nextInput = {
+            ...old,
+            ...input,
+            barberId:
+                identity.role === "admin"
+                    ? (
+                        input.barberId ??
+                        old.barberId
+                    )
+                    : identity.barberId
+        };
+
+        const nextServiceId = requireValidId(
+            nextInput.serviceId,
+            "Servicio"
+        );
+
+        const serviceRef = db
+            .collection("services")
+            .doc(nextServiceId);
+
+        const serviceSnap =
+            await transaction.get(serviceRef);
+
         const next = normalizeAppointment(
-            {
-                ...old,
-                ...input,
-                barberId:
-                    identity.role === "admin"
-                        ? (
-                            input.barberId ??
-                            old.barberId
-                        )
-                        : identity.barberId
-            },
-            identity
+            nextInput,
+            identity,
+            serviceSnap.exists
+                ? serviceSnap.data()
+                : null
         );
 
         validateFutureAppointment(next);

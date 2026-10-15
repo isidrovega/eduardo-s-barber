@@ -1,6 +1,5 @@
 
 import {
-  services,
   origins,
   availableTimes,
   getLocalDate
@@ -8,7 +7,8 @@ import {
 
 import {
   findCustomerByPhone,
-  getOrCreateCustomer
+  getOrCreateCustomer,
+  getServices
 } from "./firestore-storage.js";
 
 import { db } from "./firebase.js";
@@ -41,6 +41,7 @@ let selectedTime = "";
 
 let firebaseAppointments = [];
 let firebaseBarbers = [];
+let firebaseServices = [];
 
 let appointmentsLoaded = false;
 let savingAppointment = false;
@@ -124,9 +125,12 @@ async function initialize() {
 ===================================================== */
 
 async function populateSelectors() {
-  const snapshot = await getDocs(
-    collection(db, "barbers")
-  );
+  const [snapshot, servicesSnapshot] = await Promise.all([
+    getDocs(collection(db, "barbers")),
+    getServices()
+  ]);
+
+  firebaseServices = servicesSnapshot;
 
   /*
      Conservar todos los barberos en memoria
@@ -184,10 +188,10 @@ function updateServiceOptions() {
 
   const previousService = serviceSelect.value;
 
-  const allowedServices = services.filter(
-    service => barber?.serviceIds?.includes(
-      service.id
-    )
+  const allowedServices = firebaseServices.filter(
+    service =>
+      service.status === "active" &&
+      barber?.serviceIds?.includes(service.id)
   );
 
   serviceSelect.replaceChildren();
@@ -625,7 +629,7 @@ function getAvailableTimes(
     item => item.id === barberId
   );
 
-  const service = services.find(
+  const service = firebaseServices.find(
     item => item.id ===
       serviceSelect.value
   );
@@ -728,7 +732,7 @@ function getAvailableTimes(
       return !occupied.some(
         appointment => {
           const existingService =
-            services.find(
+            firebaseServices.find(
               item =>
                 item.id ===
                 appointment.serviceId
@@ -1369,7 +1373,7 @@ async function updateStatus(
 ===================================================== */
 
 function getService(id) {
-  return services.find(
+  return firebaseServices.find(
     service => service.id === id
   ) || {
     id,
