@@ -321,3 +321,286 @@
     }
 }
 
+
+/* =====================================================
+   INTEGRACIÓN CON EL TEMA DEL ADMINISTRADOR
+===================================================== */
+
+.appointment-calendar-panel {
+    background: var(
+        --surface,
+        var(--card-bg, #1f1f1f)
+    );
+    color: var(--text-primary, #f5f5f5);
+    border-color: var(
+        --border-color,
+        rgba(255, 255, 255, 0.12)
+    );
+}
+
+.appointment-calendar-heading h2,
+.calendar-month-title,
+.calendar-day-number {
+    color: inherit;
+}
+
+.appointment-calendar-heading p,
+.appointment-calendar-legend,
+.calendar-weekdays {
+    color: inherit;
+}
+
+.calendar-count {
+    background: rgba(128, 128, 128, 0.16);
+    color: inherit;
+}
+
+.appointment-calendar-filters label {
+    color: inherit;
+}
+
+.appointment-calendar-filters input,
+.appointment-calendar-filters select {
+    background: var(
+        --input-bg,
+        var(--surface, #292929)
+    );
+    color: var(--text-primary, #f5f5f5);
+    border: 1px solid var(
+        --border-color,
+        rgba(255, 255, 255, 0.18)
+    );
+}
+
+.appointment-calendar-filters input:focus,
+.appointment-calendar-filters select:focus {
+    outline: 2px solid #b68a45;
+    outline-offset: 1px;
+}
+
+.calendar-day {
+    background: rgba(128, 128, 128, 0.08);
+    border-color: var(
+        --border-color,
+        rgba(255, 255, 255, 0.14)
+    );
+    color: inherit;
+}
+
+.calendar-day-outside {
+    opacity: 0.35;
+}
+
+.calendar-appointment {
+    background: rgba(128, 128, 128, 0.15);
+    color: inherit;
+}
+
+.calendar-appointment.pending {
+    background: rgba(213, 155, 35, 0.13);
+}
+
+.calendar-appointment.confirmed {
+    background: rgba(37, 134, 200, 0.13);
+}
+
+.calendar-appointment.completed {
+    background: rgba(44, 153, 101, 0.13);
+}
+
+.calendar-appointment.cancelled {
+    background: rgba(203, 84, 84, 0.10);
+}
+
+.calendar-appointment.no-show {
+    background: rgba(136, 136, 136, 0.12);
+}
+
+/* Si el administrador utiliza tema claro */
+
+@media (prefers-color-scheme: light) {
+    .appointment-calendar-panel {
+        background: var(
+            --surface,
+            var(--card-bg, #ffffff)
+        );
+        color: var(--text-primary, #222222);
+    }
+
+    .appointment-calendar-filters input,
+    .appointment-calendar-filters select {
+        background: var(--input-bg, #ffffff);
+        color: var(--text-primary, #222222);
+    }
+}
+
+/* =====================================================
+   EDUARDO'S BARBERSHOP
+   CORRECCIÓN DEFINITIVA DE CONTRASTE DEL CALENDARIO
+===================================================== */
+
+/* Fondo y texto principal */
+
+.appointment-calendar-panel {
+    background: #ffffff !important;
+    color: #242424 !important;
+    border: 1px solid #e5e5e5;
+    border-radius: 16px;
+}
+
+/* Títulos y descripciones */
+
+.appointment-calendar-panel
+.appointment-calendar-heading h2,
+.appointment-calendar-panel
+.calendar-month-title {
+    color: #202020 !important;
+}
+
+.appointment-calendar-panel
+.appointment-calendar-heading p {
+    color: #666666 !important;
+}
+
+.appointment-calendar-panel
+.calendar-count {
+    background: #f1f1f1 !important;
+    color: #333333 !important;
+}
+
+/* Filtros */
+
+.appointment-calendar-panel
+.appointment-calendar-filters label {
+    color: #333333 !important;
+}
+
+.appointment-calendar-panel
+.appointment-calendar-filters input,
+.appointment-calendar-panel
+.appointment-calendar-filters select {
+    background: #ffffff !important;
+    color: #222222 !important;
+    border: 1px solid #d6d6d6 !important;
+}
+
+/* Días de la semana */
+
+.appointment-calendar-panel
+.calendar-weekdays span {
+    color: #555555 !important;
+}
+
+/* Cuadrícula */
+
+.appointment-calendar-panel
+.calendar-day {
+    background: #fafafa !important;
+    border: 1px solid #e5e5e5 !important;
+    color: #242424 !important;
+}
+
+/* Números de los días */
+
+.appointment-calendar-panel
+.calendar-day-number {
+    color: #222222 !important;
+    font-weight: 700;
+}
+
+/* Día actual */
+
+.appointment-calendar-panel
+.calendar-day.is-today {
+    background: #fff8ec !important;
+    border: 2px solid #b68a45 !important;
+}
+
+/* Días fuera del rango */
+
+.appointment-calendar-panel
+.calendar-day-outside {
+    background: #f5f5f5 !important;
+    opacity: 0.45;
+}
+
+/* Tarjetas de citas */
+
+.appointment-calendar-panel
+.calendar-appointment {
+    background: #f0f0f0 !important;
+    color: #222222 !important;
+    border-radius: 8px;
+}
+
+/* Hora */
+
+.appointment-calendar-panel
+.calendar-appointment strong {
+    color: #181818 !important;
+}
+
+/* Nombre del cliente */
+
+.appointment-calendar-panel
+.calendar-client {
+    color: #222222 !important;
+}
+
+/* Nombre del barbero */
+
+.appointment-calendar-panel
+.calendar-barber {
+    color: #555555 !important;
+}
+
+/* Colores según el estado */
+
+.appointment-calendar-panel
+.calendar-appointment.pending {
+    background: #fff4d9 !important;
+    border-left-color: #d59b23 !important;
+}
+
+.appointment-calendar-panel
+.calendar-appointment.confirmed {
+    background: #e8f4ff !important;
+    border-left-color: #2586c8 !important;
+}
+
+.appointment-calendar-panel
+.calendar-appointment.completed {
+    background: #e8f7ee !important;
+    border-left-color: #2c9965 !important;
+}
+
+.appointment-calendar-panel
+.calendar-appointment.cancelled {
+    background: #fdeaea !important;
+    border-left-color: #cb5454 !important;
+}
+
+.appointment-calendar-panel
+.calendar-appointment.no-show {
+    background: #eeeeee !important;
+    border-left-color: #888888 !important;
+}
+
+/* Leyenda */
+
+.appointment-calendar-panel
+.appointment-calendar-legend span {
+    color: #444444 !important;
+}
+
+/* Mensajes */
+
+.appointment-calendar-panel
+.calendar-empty-state {
+    color: #666666 !important;
+}
+
+.appointment-calendar-panel
+.calendar-filter-message {
+    color: #a43a2a !important;
+}
