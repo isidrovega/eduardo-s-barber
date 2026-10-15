@@ -614,3 +614,42 @@ export function renderAppointmentCalendar(
 
     elements.calendar.append(fragment);
 }
+
+/* =====================================================
+   ABRIR CALENDARIO NATIVO AL PULSAR LA FECHA
+===================================================== */
+
+function enableDatePickers() {
+    const dateInputs = [
+        document.getElementById("calendarStartDate"),
+        document.getElementById("calendarEndDate")
+    ];
+
+    dateInputs.forEach(input => {
+        if (!input || input.dataset.pickerEnabled === "true") {
+            return;
+        }
+
+        input.dataset.pickerEnabled = "true";
+
+        input.addEventListener("click", () => {
+            if (typeof input.showPicker === "function") {
+                try {
+                    input.showPicker();
+                } catch (error) {
+                    // El navegador conserva su selector nativo.
+                }
+            }
+        });
+    });
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener(
+        "DOMContentLoaded",
+        enableDatePickers,
+        { once: true }
+    );
+} else {
+    enableDatePickers();
+}
