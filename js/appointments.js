@@ -182,54 +182,119 @@ async function populateSelectors() {
 }
 
 function updateServiceOptions() {
+  const barberId = barberSelect.value;
+
   const barber = firebaseBarbers.find(
-    item => item.id === barberSelect.value
+    item => item.id === barberId
   );
 
-  const previousService = serviceSelect.value;
+  const previousServiceId = serviceSelect.value;
+
+  const assignedIds = Array.isArray(barber?.serviceIds)
+    ? barber.serviceIds
+    : [];
 
   const allowedServices = firebaseServices.filter(
     service =>
       service.status === "active" &&
-      barber?.serviceIds?.includes(service.id)
+      assignedIds.includes(service.id)
   );
 
-console.log("DIAGNÓSTICO INTERNO DE CITAS", {
-  barberSeleccionado: barberSelect.value,
-  barberoEncontrado: barber,
-  serviciosEnMemoria: firebaseServices,
-  serviciosPermitidos: allowedServices,
-  idsAsignados: barber?.serviceIds
-});
+  const options = allowedServices.map(
+    service => new Option(
+      `${service.name} · $${service.price} · ${service.duration} min`,
+      service.id
+    )
+  );
 
-  serviceSelect.replaceChildren();
-
-  for (const service of allowedServices) {
-    serviceSelect.add(
-      new Option(
-        `${service.name} · $${service.price} · ${service.duration} min`,
-        service.id
-      )
+  if (options.length === 0) {
+    options.push(
+      new Option("Sin servicios disponibles", "")
     );
   }
+
+  serviceSelect.replaceChildren(...options);
 
   if (
     allowedServices.some(
-      service => service.id === previousService
+      service => service.id === previousServiceId
     )
   ) {
-    serviceSelect.value = previousService;
+    serviceSelect.value = previousServiceId;
+  } else if (allowedServices.length > 0) {
+    serviceSelect.value = allowedServices[0].id;
+  } else {
+    serviceSelect.value = "";
   }
 
-  if (!allowedServices.length) {
-    serviceSelect.add(
-      new Option(
-        "Sin servicios disponibles",
-        ""
-      )
-    );
-  }
+  serviceSelect.disabled = allowedServices.length === 0;
+
+  return allowedServices;
 }
+
+
+/* =====================================================
+   SINCRONIZACIÓN DEL SELECTOR DE SERVICIOS
+===================================================== */
+
+let syncingServiceOptions = false;
+
+const serviceOptionsObserver = new MutationObserver(() => {
+  if (
+    syncingServiceOptions ||
+    modal.classList.contains("hidden") ||
+    serviceSelect.disabled
+  ) {
+    return;
+  }
+
+  const barber = firebaseBarbers.find(
+    item => item.id === barberSelect.value
+  );
+
+  const assignedIds = Array.isArray(barber?.serviceIds)
+    ? barber.serviceIds
+    : [];
+
+  const expectedServices = firebaseServices.filter(
+    service =>
+      service.status === "active" &&
+      assignedIds.includes(service.id)
+  );
+
+  const expectedIds = expectedServices
+    .map(service => service.id)
+    .sort();
+
+  const actualIds = [...serviceSelect.options]
+    .map(option => option.value)
+    .filter(Boolean)
+    .sort();
+
+  const isCorrect =
+    expectedIds.length === actualIds.length &&
+    expectedIds.every(
+      (id, index) => id === actualIds[index]
+    );
+
+  if (isCorrect) {
+    return;
+  }
+
+  syncingServiceOptions = true;
+
+  try {
+    updateServiceOptions();
+    renderTimes();
+  } finally {
+    syncingServiceOptions = false;
+  }
+});
+
+serviceOptionsObserver.observe(serviceSelect, {
+  childList: true,
+  subtree: true
+});
 
 /* =====================================================
    FIRESTORE EN TIEMPO REAL
@@ -467,7 +532,15 @@ function cleanBookingURL() {
    MODAL
 ===================================================== */
 
+let openingAppointmentModal = false;
+
 async function openModal() {
+  if (openingAppointmentModal) {
+    return;
+  }
+
+  openingAppointmentModal = true;
+
   try {
     await resetForm();
 
@@ -476,9 +549,19 @@ async function openModal() {
     setTimeout(() => {
       phoneInput.focus();
     }, 50);
+
   } catch (error) {
-    console.error("Error al abrir nueva cita:", error);
-    showToast("No se pudo abrir el formulario de citas.");
+    console.error(
+      "Error al abrir nueva cita:",
+      error
+    );
+
+    showToast(
+      "No se pudo abrir el formulario de citas."
+    );
+
+  } finally {
+    openingAppointmentModal = false;
   }
 }
 
@@ -507,17 +590,14 @@ async function resetForm() {
   dateInput.min = getLocalDate();
   dateInput.value = getLocalDate();
 
-  const firstActiveBarber = firebaseBarbers.find(
-    barber => barber.status === "active"
-  );
-
-  barberSelect.value = firstActiveBarber?.id || "";
+  selectedTime = "";
 
   serviceSelect.replaceChildren(
     new Option("Cargando servicios...", "")
   );
 
   serviceSelect.disabled = true;
+  barberSelect.disabled = true;
 
   try {
     const [services, snapshot] = await Promise.all([
@@ -533,34 +613,57 @@ async function resetForm() {
         id: document.id
       }))
       .sort((a, b) =>
-        (a.name || "").localeCompare(b.name || "", "es")
+        (a.name || "").localeCompare(
+          b.name || "",
+          "es"
+        )
       );
 
-    const selectedBarber = firebaseBarbers.find(
-      barber => barber.id === barberSelect.value
+    const activeBarbers = firebaseBarbers.filter(
+      barber => barber.status === "active"
     );
 
-    if (!selectedBarber || selectedBarber.status !== "active") {
-      barberSelect.value =
-        firebaseBarbers.find(
-          barber => barber.status === "active"
-        )?.id || "";
+    barberSelect.replaceChildren();
+
+    for (const barber of activeBarbers) {
+      barberSelect.add(
+        new Option(
+          barber.name || barber.id,
+          barber.id
+        )
+      );
     }
 
+    if (activeBarbers.length === 0) {
+      barberSelect.add(
+        new Option("Sin barberos activos", "")
+      );
+    }
+
+    barberSelect.value = activeBarbers[0]?.id || "";
+
     updateServiceOptions();
+
   } catch (error) {
-    console.error("Error al actualizar servicios:", error);
+    console.error(
+      "Error al cargar barberos y servicios:",
+      error
+    );
 
     serviceSelect.replaceChildren(
       new Option("Error al cargar servicios", "")
     );
 
-    showToast("No se pudieron actualizar los servicios.");
+    serviceSelect.disabled = true;
+
+    showToast(
+      "No se pudieron cargar los servicios de Firebase."
+    );
+
   } finally {
-    serviceSelect.disabled = false;
+    barberSelect.disabled = false;
   }
 
-  selectedTime = "";
   renderTimes();
 }
 
