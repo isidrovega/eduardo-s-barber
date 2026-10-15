@@ -194,6 +194,14 @@ function updateServiceOptions() {
       barber?.serviceIds?.includes(service.id)
   );
 
+  console.log("DIAGNÓSTICO INTERNO DE CITAS", {
+  barberSeleccionado: barberSelect.value,
+  barberoEncontrado: barber,
+  serviciosEnMemoria: firebaseServices,
+  serviciosPermitidos: allowedServices,
+  idsAsignados: barber?.serviceIds
+});
+
   serviceSelect.replaceChildren();
 
   for (const service of allowedServices) {
