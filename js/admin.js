@@ -1,6 +1,5 @@
 
 import {
-  services,
   origins,
   availableTimes,
   getLocalDate
@@ -9,7 +8,9 @@ import {
 import {
   getCustomers,
   findCustomerByPhone,
-  getOrCreateCustomer
+  getOrCreateCustomer,
+  getServices,
+  getBarbers
 } from "./firestore-storage.js";
 
 import { db } from "./firebase.js";
@@ -18,7 +19,6 @@ import { createAppointment } from "./appointment-booking.js";
 
 import {
   collection,
-  getDocs,
   onSnapshot
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 
@@ -27,12 +27,15 @@ import {
 ===================================================== */
 
 let selectedTime = "";
+
 let firebaseAppointments = [];
 let firebaseBarbers = [];
+let firebaseServices = [];
 let firebaseCustomerCount = 0;
 
 let appointmentsLoaded = false;
 let savingAppointment = false;
+let openingAppointmentModal = false;
 
 let unsubscribeAppointments = null;
 let customerLookupVersion = 0;
@@ -78,8 +81,12 @@ async function initialize() {
     startAppointmentsListener();
 
     await refreshCustomerCount();
+
   } catch (error) {
-    console.error("Error al iniciar el administrador:", error);
+    console.error(
+      "Error al iniciar el administrador:",
+      error
+    );
 
     statsContainer.textContent =
       "No se pudieron cargar las estadísticas.";
@@ -88,9 +95,36 @@ async function initialize() {
       "No se pudieron cargar las citas.";
 
     showToast(
-      error.message || "No se pudo iniciar el administrador."
+      error.message ||
+      "No se pudo iniciar el administrador."
     );
   }
+}
+
+/* =====================================================
+   FIRESTORE: BARBEROS Y SERVICIOS
+===================================================== */
+
+async function loadCatalog() {
+  const [barbers, services] = await Promise.all([
+    getBarbers(),
+    getServices()
+  ]);
+
+  firebaseBarbers = [...barbers].sort(
+    (a, b) =>
+      (a.name || "").localeCompare(
+        b.name || "",
+        "es"
+      )
+  );
+
+  firebaseServices = [...services];
+
+  return {
+    barbers: firebaseBarbers,
+    services: firebaseServices
+  };
 }
 
 /* =====================================================
@@ -98,28 +132,39 @@ async function initialize() {
 ===================================================== */
 
 async function populateSelectors() {
-  const snapshot = await getDocs(collection(db, "barbers"));
+  await loadCatalog();
 
-  firebaseBarbers = snapshot.docs
-    .map(document => ({
-      ...document.data(),
-      id: document.id
-    }))
-    .filter(barber => barber.status === "active")
-    .sort((a, b) =>
-      (a.name || "").localeCompare(b.name || "", "es")
-    );
+  const previousBarberId = barberSelect.value;
+
+  const activeBarbers = firebaseBarbers.filter(
+    barber => barber.status === "active"
+  );
 
   barberSelect.replaceChildren();
 
-  for (const barber of firebaseBarbers) {
+  for (const barber of activeBarbers) {
     barberSelect.add(
-      new Option(barber.name || barber.id, barber.id)
+      new Option(
+        barber.name || barber.id,
+        barber.id
+      )
     );
   }
 
-  if (!firebaseBarbers.length) {
-    throw new Error("No hay barberos activos disponibles.");
+  if (!activeBarbers.length) {
+    barberSelect.add(
+      new Option("Sin barberos activos", "")
+    );
+  }
+
+  if (
+    activeBarbers.some(
+      barber => barber.id === previousBarberId
+    )
+  ) {
+    barberSelect.value = previousBarberId;
+  } else {
+    barberSelect.value = activeBarbers[0]?.id || "";
   }
 
   updateServiceOptions();
@@ -130,36 +175,47 @@ function updateServiceOptions() {
     item => item.id === barberSelect.value
   );
 
-  const previousService = serviceSelect.value;
+  const previousServiceId = serviceSelect.value;
 
-  const allowedServices = services.filter(
-    service => barber?.serviceIds?.includes(service.id)
+  const assignedServiceIds = Array.isArray(barber?.serviceIds)
+    ? barber.serviceIds
+    : [];
+
+  const allowedServices = firebaseServices.filter(
+    service =>
+      service.status === "active" &&
+      assignedServiceIds.includes(service.id)
   );
 
-  serviceSelect.replaceChildren();
-
-  for (const service of allowedServices) {
-    serviceSelect.add(
+  const options = allowedServices.map(
+    service =>
       new Option(
-        `${service.name} · $${service.price}`,
+        `${service.name} · $${service.price} · ${service.duration} min`,
         service.id
       )
-    );
-  }
+  );
 
-  if (
-    allowedServices.some(
-      service => service.id === previousService
-    )
-  ) {
-    serviceSelect.value = previousService;
-  }
-
-  if (!allowedServices.length) {
-    serviceSelect.add(
+  if (!options.length) {
+    options.push(
       new Option("Sin servicios disponibles", "")
     );
   }
+
+  serviceSelect.replaceChildren(...options);
+
+  if (
+    allowedServices.some(
+      service => service.id === previousServiceId
+    )
+  ) {
+    serviceSelect.value = previousServiceId;
+  } else {
+    serviceSelect.value = allowedServices[0]?.id || "";
+  }
+
+  serviceSelect.disabled = allowedServices.length === 0;
+
+  return allowedServices;
 }
 
 /* =====================================================
@@ -173,19 +229,26 @@ function startAppointmentsListener() {
 
   unsubscribeAppointments = onSnapshot(
     collection(db, "appointments"),
+
     snapshot => {
-      firebaseAppointments = snapshot.docs.map(document => ({
-        ...document.data(),
-        id: document.id
-      }));
+      firebaseAppointments = snapshot.docs.map(
+        document => ({
+          ...document.data(),
+          id: document.id
+        })
+      );
 
       appointmentsLoaded = true;
 
       renderDashboard();
       renderTimes();
     },
+
     error => {
-      console.error("Error al escuchar citas:", error);
+      console.error(
+        "Error al escuchar citas:",
+        error
+      );
 
       appointmentsLoaded = false;
 
@@ -195,7 +258,9 @@ function startAppointmentsListener() {
       appointmentsContainer.textContent =
         "No se pudieron actualizar las citas.";
 
-      showToast("Error al consultar las citas de Firebase.");
+      showToast(
+        "Error al consultar las citas de Firebase."
+      );
     }
   );
 }
@@ -213,14 +278,22 @@ async function refreshCustomerCount() {
     if (appointmentsLoaded) {
       renderDashboard();
     }
+
   } catch (error) {
-    console.error("Error al contar clientes:", error);
-    showToast("No se pudo actualizar el total de clientes.");
+    console.error(
+      "Error al contar clientes:",
+      error
+    );
+
+    showToast(
+      "No se pudo actualizar el total de clientes."
+    );
   }
 }
 
 async function detectCustomer() {
   const phone = phoneInput.value.trim();
+
   const lookupVersion = ++customerLookupVersion;
 
   if (phone.replace(/\D/g, "").length < 7) {
@@ -250,6 +323,7 @@ async function detectCustomer() {
           · ${Number(customer.visits) || 0} visitas
         </div>
       `;
+
     } else {
       customerDetection.innerHTML = `
         <div class="customer-new">
@@ -257,8 +331,12 @@ async function detectCustomer() {
         </div>
       `;
     }
+
   } catch (error) {
-    console.error("Error al buscar cliente:", error);
+    console.error(
+      "Error al buscar cliente:",
+      error
+    );
 
     if (lookupVersion === customerLookupVersion) {
       customerDetection.textContent =
@@ -332,10 +410,16 @@ function renderDashboard() {
     appointment => appointment.status === "completed"
   );
 
-  const revenue = completed.reduce((total, appointment) => {
-    const service = getService(appointment.serviceId);
-    return total + service.price;
-  }, 0);
+  const revenue = completed.reduce(
+    (total, appointment) => {
+      const service = getService(appointment.serviceId);
+
+      return total + (
+        Number(service.price) || 0
+      );
+    },
+    0
+  );
 
   statsContainer.innerHTML = `
     ${statCard("Citas de hoy", todayAppointments.length)}
@@ -371,6 +455,7 @@ function renderUpcomingAppointments(appointments) {
         No hay próximas citas.
       </div>
     `;
+
     return;
   }
 
@@ -416,23 +501,49 @@ function renderUpcomingAppointments(appointments) {
    MODAL
 ===================================================== */
 
-function openModal() {
+async function openModal() {
+  if (openingAppointmentModal) {
+    return;
+  }
+
   if (!appointmentsLoaded) {
     showToast("Espera a que carguen las citas.");
     return;
   }
 
-  resetForm();
-  modal.classList.remove("hidden");
+  openingAppointmentModal = true;
 
-  setTimeout(() => phoneInput.focus(), 50);
+  try {
+    await resetForm();
+
+    modal.classList.remove("hidden");
+
+    setTimeout(() => {
+      phoneInput.focus();
+    }, 50);
+
+  } catch (error) {
+    console.error(
+      "Error al abrir nueva cita:",
+      error
+    );
+
+    showToast(
+      "No se pudo abrir el formulario de citas."
+    );
+
+  } finally {
+    openingAppointmentModal = false;
+  }
 }
 
 function closeModal() {
+  ++customerLookupVersion;
+
   modal.classList.add("hidden");
 }
 
-function resetForm() {
+async function resetForm() {
   ++customerLookupVersion;
 
   phoneInput.value = "";
@@ -449,11 +560,36 @@ function resetForm() {
   dateInput.min = getLocalDate();
   dateInput.value = getLocalDate();
 
-  barberSelect.value = firebaseBarbers[0]?.id || "";
-
-  updateServiceOptions();
-
   selectedTime = "";
+
+  serviceSelect.replaceChildren(
+    new Option("Cargando servicios...", "")
+  );
+
+  serviceSelect.disabled = true;
+  barberSelect.disabled = true;
+
+  try {
+    await populateSelectors();
+
+  } catch (error) {
+    console.error(
+      "Error al actualizar el catálogo:",
+      error
+    );
+
+    serviceSelect.replaceChildren(
+      new Option("Error al cargar servicios", "")
+    );
+
+    serviceSelect.disabled = true;
+
+    throw error;
+
+  } finally {
+    barberSelect.disabled = false;
+  }
+
   renderTimes();
 }
 
@@ -467,6 +603,15 @@ function toMinutes(value) {
   }
 
   const [hours, minutes] = value.split(":").map(Number);
+
+  if (
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return NaN;
+  }
 
   return hours * 60 + minutes;
 }
@@ -485,14 +630,25 @@ function getAvailableTimes(date, barberId) {
     item => item.id === barberId
   );
 
-  const service = services.find(
+  const service = firebaseServices.find(
     item => item.id === serviceSelect.value
   );
 
   if (
     !barber ||
+    barber.status !== "active" ||
     !service ||
+    service.status !== "active" ||
     !barber.serviceIds?.includes(service.id)
+  ) {
+    return [];
+  }
+
+  const duration = Number(service.duration);
+
+  if (
+    !Number.isFinite(duration) ||
+    duration <= 0
   ) {
     return [];
   }
@@ -531,22 +687,27 @@ function getAvailableTimes(date, barberId) {
       appointment.status !== "no-show"
   );
 
-  const now = new Date();
-
-  const businessTime = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/Mazatlan",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23"
-  }).format(now);
+  const businessTime = new Intl.DateTimeFormat(
+    "en-GB",
+    {
+      timeZone: "America/Mazatlan",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }
+  ).format(new Date());
 
   const currentMinutes = toMinutes(businessTime);
 
   return availableTimes.filter(time => {
     const start = toMinutes(time);
-    const end = start + service.duration;
+    const end = start + duration;
 
-    if (start < opening || end > closing) {
+    if (
+      !Number.isFinite(start) ||
+      start < opening ||
+      end > closing
+    ) {
       return false;
     }
 
@@ -558,21 +719,28 @@ function getAvailableTimes(date, barberId) {
     }
 
     return !occupied.some(appointment => {
-      const existingService = services.find(
+      const existingService = firebaseServices.find(
         item => item.id === appointment.serviceId
       );
 
       const existingStart = toMinutes(appointment.time);
 
-      const existingEnd =
-        existingStart +
-        (
-          appointment.duration ||
-          existingService?.duration ||
-          30
-        );
+      if (!Number.isFinite(existingStart)) {
+        return true;
+      }
 
-      return start < existingEnd && end > existingStart;
+      const existingDuration =
+        Number(appointment.duration) ||
+        Number(existingService?.duration) ||
+        30;
+
+      const existingEnd =
+        existingStart + existingDuration;
+
+      return (
+        start < existingEnd &&
+        end > existingStart
+      );
     });
   });
 }
@@ -593,6 +761,7 @@ function renderTimes() {
         No hay horarios disponibles.
       </div>
     `;
+
     return;
   }
 
@@ -648,13 +817,47 @@ async function saveAppointment() {
     return;
   }
 
+  const barber = firebaseBarbers.find(
+    item => item.id === barberSelect.value
+  );
+
+  const service = firebaseServices.find(
+    item => item.id === serviceSelect.value
+  );
+
   if (
-    !date ||
-    !selectedTime ||
-    !barberSelect.value ||
-    !serviceSelect.value
+    !barber ||
+    barber.status !== "active" ||
+    !service ||
+    service.status !== "active" ||
+    !barber.serviceIds?.includes(service.id)
   ) {
-    showToast("Selecciona servicio, barbero, fecha y hora.");
+    showToast(
+      "Selecciona un barbero y un servicio disponibles."
+    );
+
+    return;
+  }
+
+  if (!date || !selectedTime) {
+    showToast(
+      "Selecciona servicio, barbero, fecha y hora."
+    );
+
+    return;
+  }
+
+  const currentAvailableTimes = getAvailableTimes(
+    date,
+    barber.id
+  );
+
+  if (!currentAvailableTimes.includes(selectedTime)) {
+    showToast(
+      "El horario seleccionado ya no está disponible."
+    );
+
+    renderTimes();
     return;
   }
 
@@ -663,8 +866,8 @@ async function saveAppointment() {
     phone,
     date,
     time: selectedTime,
-    barberId: barberSelect.value,
-    serviceId: serviceSelect.value,
+    barberId: barber.id,
+    serviceId: service.id,
     origin: originSelect.value,
     notes: notesInput.value.trim()
   };
@@ -680,6 +883,7 @@ async function saveAppointment() {
 
   try {
     await createAppointment(appointment);
+
     appointmentCreated = true;
 
     await getOrCreateCustomer(name, phone);
@@ -691,8 +895,12 @@ async function saveAppointment() {
     showToast(
       `Cita de ${name} y cliente registrados en Firebase.`
     );
+
   } catch (error) {
-    console.error("Error al guardar:", error);
+    console.error(
+      "Error al guardar:",
+      error
+    );
 
     if (appointmentCreated) {
       closeModal();
@@ -700,11 +908,14 @@ async function saveAppointment() {
       showToast(
         "La cita se guardó, pero falló el registro del cliente."
       );
+
     } else {
       showToast(
-        error.message || "No se pudo registrar la cita."
+        error.message ||
+        "No se pudo registrar la cita."
       );
     }
+
   } finally {
     savingAppointment = false;
     button.disabled = false;
@@ -716,7 +927,9 @@ async function saveAppointment() {
 ===================================================== */
 
 function getService(id) {
-  return services.find(service => service.id === id) || {
+  return firebaseServices.find(
+    service => service.id === id
+  ) || {
     id,
     name: "Servicio no disponible",
     price: 0,
@@ -725,7 +938,9 @@ function getService(id) {
 }
 
 function getBarber(id) {
-  return firebaseBarbers.find(barber => barber.id === id) || {
+  return firebaseBarbers.find(
+    barber => barber.id === id
+  ) || {
     id,
     name: "Barbero no disponible"
   };
@@ -764,6 +979,14 @@ function formatTime(time) {
   if (!time) return "";
 
   const [hours, minutes] = time.split(":").map(Number);
+
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes)
+  ) {
+    return "";
+  }
+
   const period = hours >= 12 ? "PM" : "AM";
 
   return (
@@ -778,12 +1001,16 @@ function formatDate(dateString) {
   return new Intl.DateTimeFormat("es-MX", {
     day: "2-digit",
     month: "short"
-  }).format(new Date(`${dateString}T12:00:00`));
+  }).format(
+    new Date(`${dateString}T12:00:00`)
+  );
 }
 
 function escapeHTML(value) {
   const element = document.createElement("div");
+
   element.textContent = String(value ?? "");
+
   return element.innerHTML;
 }
 
