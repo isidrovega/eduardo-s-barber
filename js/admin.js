@@ -1,6 +1,37 @@
-import { services, barbers, origins, availableTimes, getLocalDate } from "./data.js";
-import { getAppointments, saveAppointments, getCustomers, findCustomerByPhone, getOrCreateCustomer, generateId } from "./storage.js";
+
+import {
+  services,
+  origins,
+  availableTimes,
+  getLocalDate
+} from "./data.js";
+
+import {
+  getCustomers,
+  findCustomerByPhone,
+  getOrCreateCustomer
+} from "./storage.js";
+
+import { db } from "./firebase.js";
+import { protectPage } from "./auth.js";
+import { createAppointment } from "./appointment-booking.js";
+
+import {
+  collection,
+  getDocs,
+  onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+/* =====================================================
+   STATE
+===================================================== */
+
 let selectedTime = "";
+let firebaseAppointments = [];
+let firebaseBarbers = [];
+let appointmentsLoaded = false;
+let savingAppointment = false;
+let unsubscribeAppointments = null;
 
 /* =====================================================
    ELEMENTS
@@ -18,43 +49,160 @@ const notesInput = document.getElementById("appointmentNotes");
 const timeContainer = document.getElementById("appointmentTimes");
 const customerDetection = document.getElementById("customerDetection");
 
+const statsContainer = document.getElementById("dashboardStats");
+const appointmentsContainer = document.getElementById(
+  "dashboardAppointments"
+);
+
 /* =====================================================
-   INITIALIZE
+   INITIALIZATION
 ===================================================== */
 
-function initialize() {
-  populateSelectors();
-  configureEvents();
-  renderDashboard();
+async function initialize() {
+  statsContainer.textContent = "Cargando estadísticas...";
+  appointmentsContainer.textContent = "Cargando citas...";
+
+  try {
+    const user = await protectPage("admin");
+
+    if (!user) {
+      return;
+    }
+
+    await populateSelectors();
+    configureEvents();
+    startAppointmentsListener();
+  } catch (error) {
+    console.error("Error al iniciar el administrador:", error);
+
+    statsContainer.textContent =
+      "No se pudieron cargar las estadísticas.";
+
+    appointmentsContainer.textContent =
+      "No se pudieron cargar las citas.";
+
+    showToast(
+      error.message || "No se pudo iniciar el administrador."
+    );
+  }
 }
-function populateSelectors() {
-  serviceSelect.innerHTML = services.map(service => `
-                    <option
-                        value="${service.id}"
-                    >
-                        ${service.name}
-                        ·
-                        $${service.price}
-                    </option>
-                `).join("");
-  barberSelect.innerHTML = barbers.map(barber => `
-                    <option
-                        value="${barber.id}"
-                    >
-                        ${barber.name}
-                    </option>
-                `).join("");
+
+/* =====================================================
+   SELECTORS
+===================================================== */
+
+async function populateSelectors() {
+  serviceSelect.replaceChildren();
+
+  for (const service of services) {
+    serviceSelect.add(
+      new Option(
+        `${service.name} · $${service.price}`,
+        service.id
+      )
+    );
+  }
+
+  const snapshot = await getDocs(collection(db, "barbers"));
+
+  firebaseBarbers = snapshot.docs
+    .map(document => ({
+      ...document.data(),
+      id: document.id
+    }))
+    .filter(barber => barber.status === "active")
+    .sort((a, b) =>
+      (a.name || "").localeCompare(b.name || "", "es")
+    );
+
+  barberSelect.replaceChildren();
+
+  for (const barber of firebaseBarbers) {
+    barberSelect.add(
+      new Option(
+        barber.name || barber.id,
+        barber.id
+      )
+    );
+  }
+
+  if (!firebaseBarbers.length) {
+    throw new Error(
+      "No hay barberos activos disponibles."
+    );
+  }
+
+  updateServiceOptions();
 }
+
+/* =====================================================
+   FIRESTORE REALTIME
+===================================================== */
+
+function startAppointmentsListener() {
+  if (unsubscribeAppointments) {
+    unsubscribeAppointments();
+  }
+
+  unsubscribeAppointments = onSnapshot(
+    collection(db, "appointments"),
+    snapshot => {
+      firebaseAppointments = snapshot.docs.map(document => ({
+        ...document.data(),
+        id: document.id
+      }));
+
+      appointmentsLoaded = true;
+
+      renderDashboard();
+      renderTimes();
+    },
+    error => {
+      console.error("Error al escuchar citas:", error);
+
+      appointmentsLoaded = false;
+
+      statsContainer.textContent =
+        "No se pudieron actualizar las estadísticas.";
+
+      appointmentsContainer.textContent =
+        "No se pudieron actualizar las citas.";
+
+      showToast("Error al consultar Firebase.");
+    }
+  );
+}
+
+/* =====================================================
+   EVENTS
+===================================================== */
+
 function configureEvents() {
-  document.getElementById("newAppointmentButton").addEventListener("click", openModal);
-  document.getElementById("quickNewAppointment").addEventListener("click", openModal);
-  document.getElementById("closeModalButton").addEventListener("click", closeModal);
-  document.getElementById("cancelModalButton").addEventListener("click", closeModal);
-  document.getElementById("saveAppointmentButton").addEventListener("click", saveAppointment);
+  document.getElementById("newAppointmentButton")
+    .addEventListener("click", openModal);
+
+  document.getElementById("quickNewAppointment")
+    .addEventListener("click", openModal);
+
+  document.getElementById("closeModalButton")
+    .addEventListener("click", closeModal);
+
+  document.getElementById("cancelModalButton")
+    .addEventListener("click", closeModal);
+
+  document.getElementById("saveAppointmentButton")
+    .addEventListener("click", saveAppointment);
+
   phoneInput.addEventListener("input", detectCustomer);
-  barberSelect.addEventListener("change", renderTimes);
+
+  barberSelect.addEventListener("change", () => {
+    updateServiceOptions();
+    renderTimes();
+  });
+
   serviceSelect.addEventListener("change", renderTimes);
   dateInput.addEventListener("change", renderTimes);
+
   modal.addEventListener("click", event => {
     if (event.target === modal) {
       closeModal();
@@ -67,99 +215,109 @@ function configureEvents() {
 ===================================================== */
 
 function renderDashboard() {
-  const appointments = getAppointments();
-  const customers = getCustomers();
-  const today = getLocalDate();
-  const todayAppointments = appointments.filter(appointment => appointment.date === today && appointment.status !== "cancelled");
-  const completed = appointments.filter(appointment => appointment.status === "completed");
-  const revenue = completed.reduce((total, appointment) => {
-    const service = getService(appointment.serviceId);
-    return total + service.price;
-  }, 0);
-  document.getElementById("dashboardStats").innerHTML = `
-
-        ${statCard("Citas de hoy", todayAppointments.length)}
-
-        ${statCard("Clientes", customers.length)}
-
-        ${statCard("Completadas", completed.length)}
-
-        ${statCard("Ingresos registrados", `$${revenue}`)}
-
-    `;
-  renderUpcomingAppointments(appointments);
-}
-function renderUpcomingAppointments(appointments) {
-  const upcoming = appointments.filter(appointment => appointment.status === "pending" || appointment.status === "confirmed").sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).slice(0, 7);
-  const container = document.getElementById("dashboardAppointments");
-  if (!upcoming.length) {
-    container.innerHTML = `
-            <div class="empty">
-                No hay próximas citas.
-            </div>
-        `;
+  if (!appointmentsLoaded) {
     return;
   }
-  container.innerHTML = upcoming.map(appointment => {
+
+  const appointments = firebaseAppointments;
+  const customers = getCustomers();
+  const today = getLocalDate();
+
+  const todayAppointments = appointments.filter(
+    appointment =>
+      appointment.date === today &&
+      appointment.status !== "cancelled"
+  );
+
+  const completed = appointments.filter(
+    appointment => appointment.status === "completed"
+  );
+
+  const revenue = completed.reduce((total, appointment) => {
     const service = getService(appointment.serviceId);
-    const barber = getBarber(appointment.barberId);
-    return `
-                        <div
-                            class="
-                                dashboard-appointment
-                            "
-                        >
 
-                            <div
-                                class="
-                                    appointment-time
-                                "
-                            >
-                                ${formatTime(appointment.time)}
-                            </div>
+    return total + service.price;
+  }, 0);
 
+  statsContainer.innerHTML = `
+    ${statCard("Citas de hoy", todayAppointments.length)}
+    ${statCard("Clientes", customers.length)}
+    ${statCard("Completadas", completed.length)}
+    ${statCard("Ingresos registrados", `$${revenue}`)}
+  `;
 
-                            <div
-                                class="
-                                    appointment-client
-                                "
-                            >
+  renderUpcomingAppointments(appointments);
+}
 
-                                <strong>
-                                    ${escapeHTML(appointment.clientName)}
-                                </strong>
+/* =====================================================
+   UPCOMING APPOINTMENTS
+===================================================== */
 
-                                <span>
-                                    ${service.name}
-                                    ·
-                                    ${formatDate(appointment.date)}
-                                    ·
-                                    ${origins[appointment.origin] || "Otro"}
-                                </span>
+function renderUpcomingAppointments(appointments) {
+  const today = getLocalDate();
 
-                            </div>
+  const upcoming = appointments
+    .filter(appointment =>
+      (
+        appointment.status === "pending" ||
+        appointment.status === "confirmed"
+      ) &&
+      appointment.date >= today
+    )
+    .sort((a, b) =>
+      `${a.date} ${a.time}`.localeCompare(
+        `${b.date} ${b.time}`
+      )
+    )
+    .slice(0, 7);
 
+  if (!upcoming.length) {
+    appointmentsContainer.innerHTML = `
+      <div class="empty">
+        No hay próximas citas.
+      </div>
+    `;
+    return;
+  }
 
-                            <div
-                                class="
-                                    appointment-barber
-                                "
-                            >
-                                ${barber.name}
-                            </div>
+  appointmentsContainer.innerHTML = upcoming
+    .map(appointment => {
+      const service = getService(appointment.serviceId);
+      const barber = getBarber(appointment.barberId);
 
+      return `
+        <div class="dashboard-appointment">
+          <div class="appointment-time">
+            ${formatTime(appointment.time)}
+          </div>
 
-                            <div
-                                class="
-                                    appointment-status
-                                "
-                            >
-                                ${renderStatus(appointment.status)}
-                            </div>
+          <div class="appointment-client">
+            <strong>
+              ${escapeHTML(appointment.clientName)}
+            </strong>
 
-                        </div>
-                    `;
-  }).join("");
+            <span>
+              ${escapeHTML(service.name)}
+              ·
+              ${formatDate(appointment.date)}
+              ·
+              ${escapeHTML(
+                origins[appointment.origin] || "Otro"
+              )}
+            </span>
+          </div>
+
+          <div class="appointment-barber">
+            ${escapeHTML(barber.name)}
+          </div>
+
+          <div class="appointment-status">
+            ${renderStatus(appointment.status)}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 /* =====================================================
@@ -167,26 +325,46 @@ function renderUpcomingAppointments(appointments) {
 ===================================================== */
 
 function openModal() {
+  if (!appointmentsLoaded) {
+    showToast("Espera a que carguen las citas.");
+    return;
+  }
+
   resetForm();
   modal.classList.remove("hidden");
+
   setTimeout(() => {
     phoneInput.focus();
   }, 50);
 }
+
 function closeModal() {
   modal.classList.add("hidden");
 }
+
 function resetForm() {
   phoneInput.value = "";
   nameInput.value = "";
   notesInput.value = "";
-  customerDetection.innerHTML = "";
+
+  customerDetection.replaceChildren();
+
   originSelect.value = "whatsapp";
-  statusSelect.value = "confirmed";
+
+  /*
+   * El servidor crea las citas como pending.
+   * Reflejamos ese estado en el formulario.
+   */
+  statusSelect.value = "pending";
+  statusSelect.disabled = true;
+
   dateInput.min = getLocalDate();
   dateInput.value = getLocalDate();
-  serviceSelect.value = services[0].id;
-  barberSelect.value = barbers[0].id;
+
+  barberSelect.value = firebaseBarbers[0]?.id || "";
+
+  updateServiceOptions();
+
   selectedTime = "";
   renderTimes();
 }
@@ -197,133 +375,317 @@ function resetForm() {
 
 function detectCustomer() {
   const phone = phoneInput.value.trim();
+
   if (phone.replace(/\D/g, "").length < 7) {
-    customerDetection.innerHTML = "";
+    customerDetection.replaceChildren();
     return;
   }
+
   const customer = findCustomerByPhone(phone);
+
   if (customer) {
     nameInput.value = customer.name;
+
     customerDetection.innerHTML = `
-            <div class="customer-found">
+      <div class="customer-found">
+        ✓ Cliente encontrado:
+        <strong>${escapeHTML(customer.name)}</strong>
+        · ${Number(customer.visits) || 0} visitas
+      </div>
+    `;
 
-                ✓ Cliente encontrado:
-
-                <strong>
-                    ${escapeHTML(customer.name)}
-                </strong>
-
-                ·
-
-                ${customer.visits}
-                visitas
-
-            </div>
-        `;
     return;
   }
+
   customerDetection.innerHTML = `
-        <div class="customer-new">
+    <div class="customer-new">
+      Cliente nuevo.
+      Se registrará automáticamente al guardar.
+    </div>
+  `;
+}
 
-            Cliente nuevo.
-            Se registrará automáticamente
-            al guardar.
+/* =====================================================
+   SERVICES
+===================================================== */
 
-        </div>
-    `;
+function updateServiceOptions() {
+  const barber = firebaseBarbers.find(
+    item => item.id === barberSelect.value
+  );
+
+  const previousService = serviceSelect.value;
+
+  const allowedServices = services.filter(
+    service => barber?.serviceIds?.includes(service.id)
+  );
+
+  serviceSelect.replaceChildren();
+
+  for (const service of allowedServices) {
+    serviceSelect.add(
+      new Option(
+        `${service.name} · $${service.price}`,
+        service.id
+      )
+    );
+  }
+
+  if (
+    allowedServices.some(
+      service => service.id === previousService
+    )
+  ) {
+    serviceSelect.value = previousService;
+  }
+
+  if (!allowedServices.length) {
+    serviceSelect.add(
+      new Option("Sin servicios disponibles", "")
+    );
+  }
+}
+
+/* =====================================================
+   AVAILABILITY
+===================================================== */
+
+function toMinutes(value) {
+  if (!/^\d{2}:\d{2}$/.test(value || "")) {
+    return NaN;
+  }
+
+  const [hours, minutes] = value.split(":").map(Number);
+
+  return hours * 60 + minutes;
+}
+
+function getAvailableTimes(date, barberId) {
+  if (
+    !appointmentsLoaded ||
+    !date ||
+    !barberId ||
+    !serviceSelect.value
+  ) {
+    return [];
+  }
+
+  const barber = firebaseBarbers.find(
+    item => item.id === barberId
+  );
+
+  const service = getService(serviceSelect.value);
+
+  if (
+    !barber ||
+    !barber.serviceIds?.includes(service.id)
+  ) {
+    return [];
+  }
+
+  const weekday = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday"
+  ][new Date(`${date}T12:00:00Z`).getUTCDay()];
+
+  const schedule = barber.schedule?.[weekday];
+
+  if (!schedule?.enabled) {
+    return [];
+  }
+
+  const opening = toMinutes(schedule.start);
+  const closing = toMinutes(schedule.end);
+
+  const occupied = firebaseAppointments.filter(
+    appointment =>
+      appointment.date === date &&
+      appointment.barberId === barberId &&
+      appointment.status !== "cancelled" &&
+      appointment.status !== "no-show"
+  );
+
+  const now = new Date();
+  const currentTime =
+    now.getHours() * 60 + now.getMinutes();
+
+  return availableTimes.filter(time => {
+    const start = toMinutes(time);
+    const end = start + service.duration;
+
+    if (
+      start < opening ||
+      end > closing ||
+      !Number.isFinite(opening) ||
+      !Number.isFinite(closing)
+    ) {
+      return false;
+    }
+
+    if (
+      date === getLocalDate() &&
+      start <= currentTime
+    ) {
+      return false;
+    }
+
+    return !occupied.some(appointment => {
+      const existingService = services.find(
+        item => item.id === appointment.serviceId
+      );
+
+      const existingStart = toMinutes(appointment.time);
+
+      const existingEnd =
+        existingStart +
+        (
+          appointment.duration ||
+          existingService?.duration ||
+          30
+        );
+
+      return (
+        start < existingEnd &&
+        end > existingStart
+      );
+    });
+  });
 }
 
 /* =====================================================
    TIMES
 ===================================================== */
 
-function getAvailableTimes(date, barberId) {
-  const appointments = getAppointments();
-  const occupied = appointments.filter(appointment => appointment.date === date && appointment.barberId === barberId && appointment.status !== "cancelled" && appointment.status !== "no-show").map(appointment => appointment.time);
-  return availableTimes.filter(time => !occupied.includes(time));
-}
 function renderTimes() {
-  const times = getAvailableTimes(dateInput.value, barberSelect.value);
+  const times = getAvailableTimes(
+    dateInput.value,
+    barberSelect.value
+  );
+
   if (!times.includes(selectedTime)) {
     selectedTime = times[0] || "";
   }
+
   if (!times.length) {
     timeContainer.innerHTML = `
-            <div
-                class="empty"
-                style="
-                    grid-column:
-                    1 / -1;
-                "
-            >
-                No hay horarios disponibles.
-            </div>
-        `;
+      <div class="empty" style="grid-column: 1 / -1;">
+        No hay horarios disponibles.
+      </div>
+    `;
     return;
   }
-  timeContainer.innerHTML = times.map(time => `
-                    <button
-                        type="button"
 
-                        class="
-                            time-button
-                            ${selectedTime === time ? "selected" : ""}
-                        "
+  timeContainer.innerHTML = times
+    .map(time => `
+      <button
+        type="button"
+        class="time-button ${
+          selectedTime === time ? "selected" : ""
+        }"
+        data-time="${time}"
+      >
+        ${formatTime(time)}
+      </button>
+    `)
+    .join("");
 
-                        data-time="${time}"
-                    >
-                        ${formatTime(time)}
-                    </button>
-                `).join("");
-  timeContainer.querySelectorAll(".time-button").forEach(button => {
-    button.addEventListener("click", () => {
-      selectedTime = button.dataset.time;
-      renderTimes();
+  timeContainer
+    .querySelectorAll(".time-button")
+    .forEach(button => {
+      button.addEventListener("click", () => {
+        selectedTime = button.dataset.time;
+        renderTimes();
+      });
     });
-  });
 }
 
 /* =====================================================
    SAVE APPOINTMENT
 ===================================================== */
 
-function saveAppointment() {
+async function saveAppointment() {
+  if (savingAppointment) {
+    return;
+  }
+
+  if (!appointmentsLoaded) {
+    showToast("Espera a que carguen las citas.");
+    return;
+  }
+
   const name = nameInput.value.trim();
   const phone = phoneInput.value.trim();
   const date = dateInput.value;
-  if (!name || !phone) {
-    showToast("Ingresa nombre y teléfono.");
+
+  if (!name) {
+    showToast("Ingresa el nombre del cliente.");
+    nameInput.focus();
     return;
   }
-  if (!date || !selectedTime) {
-    showToast("Selecciona fecha y horario.");
+
+  if (phone.replace(/\D/g, "").length < 7) {
+    showToast("Ingresa un teléfono válido.");
+    phoneInput.focus();
     return;
   }
-  const appointments = getAppointments();
-  const occupied = appointments.some(appointment => appointment.date === date && appointment.time === selectedTime && appointment.barberId === barberSelect.value && appointment.status !== "cancelled" && appointment.status !== "no-show");
-  if (occupied) {
-    showToast("Ese horario ya está ocupado.");
-    renderTimes();
+
+  if (
+    !date ||
+    !selectedTime ||
+    !barberSelect.value ||
+    !serviceSelect.value
+  ) {
+    showToast("Selecciona servicio, barbero, fecha y hora.");
     return;
   }
-  getOrCreateCustomer(name, phone);
-  appointments.push({
-    id: generateId("appointment"),
-    date,
-    time: selectedTime,
+
+  const appointment = {
     clientName: name,
     phone,
-    serviceId: serviceSelect.value,
+    date,
+    time: selectedTime,
     barberId: barberSelect.value,
+    serviceId: serviceSelect.value,
     origin: originSelect.value,
-    status: statusSelect.value,
-    notes: notesInput.value.trim(),
-    loyaltyApplied: false
-  });
-  saveAppointments(appointments);
-  closeModal();
-  renderDashboard();
-  showToast(`Cita de ${name} registrada.`);
+    notes: notesInput.value.trim()
+  };
+
+  const button = document.getElementById(
+    "saveAppointmentButton"
+  );
+
+  savingAppointment = true;
+  button.disabled = true;
+
+  try {
+    await createAppointment(appointment);
+
+    /*
+     * Los clientes siguen en localStorage
+     * temporalmente.
+     */
+    getOrCreateCustomer(name, phone);
+
+    closeModal();
+
+    showToast(
+      `Cita de ${name} registrada correctamente.`
+    );
+  } catch (error) {
+    console.error("Error al guardar cita:", error);
+
+    showToast(
+      error.message || "No se pudo registrar la cita."
+    );
+  } finally {
+    savingAppointment = false;
+    button.disabled = false;
+  }
 }
 
 /* =====================================================
@@ -331,26 +693,36 @@ function saveAppointment() {
 ===================================================== */
 
 function getService(id) {
-  return services.find(service => service.id === id) || services[0];
+  return (
+    services.find(service => service.id === id) ||
+    {
+      id,
+      name: "Servicio no disponible",
+      price: 0,
+      duration: 30
+    }
+  );
 }
+
 function getBarber(id) {
-  return barbers.find(barber => barber.id === id) || barbers[0];
+  return (
+    firebaseBarbers.find(barber => barber.id === id) ||
+    {
+      id,
+      name: "Barbero no disponible"
+    }
+  );
 }
+
 function statCard(label, value) {
   return `
-        <article class="stat-card">
-
-            <span>
-                ${label}
-            </span>
-
-            <strong>
-                ${value}
-            </strong>
-
-        </article>
-    `;
+    <article class="stat-card">
+      <span>${escapeHTML(label)}</span>
+      <strong>${escapeHTML(value)}</strong>
+    </article>
+  `;
 }
+
 function renderStatus(status) {
   const labels = {
     pending: "Pendiente",
@@ -359,43 +731,75 @@ function renderStatus(status) {
     cancelled: "Cancelada",
     "no-show": "No asistió"
   };
+
+  const safeStatus = Object.hasOwn(labels, status)
+    ? status
+    : "pending";
+
   return `
-        <span
-            class="
-                status
-                ${status}
-            "
-        >
-            ${labels[status] || status}
-        </span>
-    `;
+    <span class="status ${safeStatus}">
+      ${labels[safeStatus]}
+    </span>
+  `;
 }
+
 function formatTime(time) {
+  if (!time) {
+    return "";
+  }
+
   const [hours, minutes] = time.split(":").map(Number);
   const period = hours >= 12 ? "PM" : "AM";
   const hour = hours % 12 || 12;
-  return `${hour}:${String(minutes).padStart(2, "0")} ${period}`;
+
+  return (
+    `${hour}:` +
+    `${String(minutes).padStart(2, "0")} ` +
+    period
+  );
 }
+
 function formatDate(dateString) {
+  if (!dateString) {
+    return "";
+  }
+
   const date = new Date(`${dateString}T12:00:00`);
+
   return new Intl.DateTimeFormat("es-MX", {
     day: "2-digit",
     month: "short"
   }).format(date);
 }
+
 function escapeHTML(value) {
   const element = document.createElement("div");
-  element.textContent = String(value || "");
+  element.textContent = String(value ?? "");
   return element.innerHTML;
 }
+
 let toastTimer;
+
 function showToast(message) {
   const toast = document.getElementById("toast");
+
+  if (!toast) {
+    console.warn(message);
+    return;
+  }
+
   toast.textContent = message;
   toast.classList.add("show");
+
   clearTimeout(toastTimer);
+
   toastTimer = setTimeout(() => {
     toast.classList.remove("show");
   }, 2800);
 }
+
+/* =====================================================
+   START
+===================================================== */
+
 initialize();
