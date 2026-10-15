@@ -194,7 +194,7 @@ function updateServiceOptions() {
       barber?.serviceIds?.includes(service.id)
   );
 
-  console.log("DIAGNÓSTICO INTERNO DE CITAS", {
+console.log("DIAGNÓSTICO INTERNO DE CITAS", {
   barberSeleccionado: barberSelect.value,
   barberoEncontrado: barber,
   serviciosEnMemoria: firebaseServices,
