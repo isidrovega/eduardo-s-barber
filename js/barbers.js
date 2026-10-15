@@ -1,21 +1,33 @@
 
-import { services } from "./data.js";
-
 import {
     getAppointments,
+    getServices,
+    getBarbers,
+    saveBarber,
     generateId
-} from "./storage.js";
-
-import {
-    getBarbers as getBarbersFromFirestore,
-    saveBarber as saveBarberToFirestore
 } from "./firestore-storage.js";
 
+import {
+    protectPage
+} from "./auth.js";
+
 /* =====================================================
-   CONFIGURACIÓN
+   EDUARDO'S BARBERSHOP
+   BARBERS.JS
+
+   - Firestore como única fuente de datos.
+   - Sin localStorage.
+   - Sin barberos predeterminados.
+   - Conserva horarios y comisiones.
 ===================================================== */
 
-const STORAGE_KEY = "barbershop_barbers";
+/* =====================================================
+   ESTADO
+===================================================== */
+
+let barbersData = [];
+let servicesData = [];
+let appointmentsData = [];
 
 let editingBarberId = null;
 let savingBarber = false;
@@ -70,7 +82,7 @@ const defaultSchedule = {
 };
 
 /* =====================================================
-   ELEMENTOS
+   ELEMENTOS DEL DOM
 ===================================================== */
 
 const barbersGrid =
@@ -113,140 +125,56 @@ const saveBarberButton =
    INICIALIZACIÓN
 ===================================================== */
 
-async function loadBarbersFromFirebase() {
+async function initialize() {
+    const user = await protectPage("admin");
+
+    if (!user) {
+        return;
+    }
+
+    configureEvents();
+
+    await loadData();
+}
+
+async function loadData() {
     try {
-        const firebaseBarbers =
-            await getBarbersFromFirestore();
+        const [
+            barbers,
+            services,
+            appointments
+        ] = await Promise.all([
+            getBarbers(),
+            getServices(),
+            getAppointments()
+        ]);
 
-        if (!Array.isArray(firebaseBarbers)) {
-            throw new Error(
-                "Firebase no devolvió una lista válida."
-            );
-        }
-
-        /*
-         * Los datos locales se conservan.
-         * Firebase tiene prioridad cuando coincide el ID.
-         *
-         * Esta lectura NO sube automáticamente los
-         * barberos antiguos que solo existen localmente.
-         */
-        const localBarbers = getBarbers();
-
-        const mergedBarbers = new Map(
-            localBarbers
-                .filter(barber => barber && barber.id)
-                .map(barber => [barber.id, barber])
-        );
-
-        for (const barber of firebaseBarbers) {
-            if (barber && barber.id) {
-                mergedBarbers.set(barber.id, barber);
-            }
-        }
-
-        /*
-         * Evitar que una lectura antigua de Firebase
-         * sobrescriba cambios realizados mientras
-         * estaba abierta la página.
-         */
-        if (savingBarber || editingBarberId) {
-            console.info(
-                "Lectura de Firebase aplazada para proteger cambios en curso."
-            );
-            return;
-        }
-
-        saveBarbers(
-            Array.from(mergedBarbers.values())
-        );
+        barbersData = barbers;
+        servicesData = services;
+        appointmentsData = appointments;
 
         renderSummary();
         renderBarbers();
 
         console.info(
             "Barberos cargados desde Firebase:",
-            firebaseBarbers.length
+            barbersData.length
         );
+
     } catch (error) {
         console.error(
-            "No se pudieron cargar los barberos desde Firebase:",
+            "Error cargando datos de Firebase:",
             error
         );
 
         showToast(
-            "No se pudo consultar Firebase. Se conservan los datos locales."
+            "No se pudieron cargar los datos de Firebase."
         );
     }
 }
 
-function initialize() {
-    configureEvents();
-
-    // Mostrar inmediatamente los barberos locales.
-    renderSummary();
-    renderBarbers();
-
-    // Consultar Firebase sin bloquear la interfaz.
-    void loadBarbersFromFirebase();
-}
-
 /* =====================================================
-   ALMACENAMIENTO LOCAL
-===================================================== */
-
-function getBarbers() {
-    try {
-        const stored = JSON.parse(
-            localStorage.getItem(STORAGE_KEY)
-        );
-
-        return Array.isArray(stored)
-            ? stored
-            : [];
-    } catch (error) {
-        console.error(
-            "Error al consultar barberos locales:",
-            error
-        );
-
-        return [];
-    }
-}
-
-function saveBarbers(barbers) {
-    localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify(barbers)
-    );
-}
-
-/* =====================================================
-   FIREBASE
-===================================================== */
-
-async function syncBarberWithFirestore(barber) {
-    try {
-        await saveBarberToFirestore(barber);
-
-        console.info(
-            "Barbero sincronizado con Firestore:",
-            barber.id
-        );
-
-        return true;
-    } catch (error) {
-        console.error(
-            "Error al sincronizar barbero con Firestore:",
-            error
-        );
-
-        return false;
-    }
-}
-
-/* =====================================================
-   HORARIOS BASE
+   HORARIOS PREDETERMINADOS DEL FORMULARIO
 ===================================================== */
 
 function createSchedule(overrides = {}) {
@@ -263,19 +191,30 @@ function createSchedule(overrides = {}) {
 function configureEvents() {
     document
         .getElementById("newBarberButton")
-        .addEventListener("click", openNewBarber);
+        .addEventListener(
+            "click",
+            openNewBarber
+        );
 
     document
         .getElementById("closeBarberModal")
-        .addEventListener("click", closeModal);
+        .addEventListener(
+            "click",
+            closeModal
+        );
 
     document
         .getElementById("cancelBarberButton")
-        .addEventListener("click", closeModal);
+        .addEventListener(
+            "click",
+            closeModal
+        );
 
     saveBarberButton.addEventListener(
         "click",
-        saveBarber
+        () => {
+            void saveCurrentBarber();
+        }
     );
 
     barbersGrid.addEventListener(
@@ -339,9 +278,7 @@ function configureEvents() {
 ===================================================== */
 
 function renderSummary() {
-    const barbers = getBarbers();
-
-    const active = barbers.filter(
+    const active = barbersData.filter(
         barber => barber.status === "active"
     );
 
@@ -351,7 +288,7 @@ function renderSummary() {
 
     barberSummary.innerHTML = `
         <div class="barber-summary-item">
-            <strong>${barbers.length}</strong>
+            <strong>${barbersData.length}</strong>
             <span>Barberos</span>
         </div>
 
@@ -376,10 +313,7 @@ function renderSummary() {
 ===================================================== */
 
 function renderBarbers() {
-    const barbers = getBarbers();
-    const appointments = getAppointments();
-
-    if (!barbers.length) {
+    if (!barbersData.length) {
         barbersGrid.innerHTML = `
             <div
                 class="panel"
@@ -394,12 +328,12 @@ function renderBarbers() {
         return;
     }
 
-    barbersGrid.innerHTML = barbers
+    barbersGrid.innerHTML = barbersData
         .map(barber => {
             const appointmentsToday =
                 getAppointmentsToday(
                     barber.id,
-                    appointments
+                    appointmentsData
                 );
 
             const todaySchedule =
@@ -409,7 +343,7 @@ function renderBarbers() {
                 barber.serviceIds || []
             )
                 .map(id =>
-                    services.find(
+                    servicesData.find(
                         service => service.id === id
                     )
                 )
@@ -596,9 +530,7 @@ function openNewBarber() {
 
     setCommissionValue(50);
 
-    renderServices(
-        services.map(service => service.id)
-    );
+    renderServices([]);
 
     renderSchedule(
         createSchedule()
@@ -612,7 +544,7 @@ function openNewBarber() {
 ===================================================== */
 
 function openEditBarber(id) {
-    const barber = getBarbers().find(
+    const barber = barbersData.find(
         item => item.id === id
     );
 
@@ -759,8 +691,23 @@ function updateCommissionPreview() {
    SERVICIOS
 ===================================================== */
 
-function renderServices(selectedIds) {
-    barberServices.innerHTML = services
+function renderServices(selectedIds = []) {
+    const activeServices = servicesData.filter(
+        service => service.status === "active"
+    );
+
+    if (!activeServices.length) {
+        barberServices.innerHTML = `
+            <p class="module-empty-state">
+                No hay servicios activos registrados.
+                Primero crea un servicio en el módulo Servicios.
+            </p>
+        `;
+
+        return;
+    }
+
+    barberServices.innerHTML = activeServices
         .map(service => `
             <label class="modern-service-option">
                 <input
@@ -783,8 +730,8 @@ function renderServices(selectedIds) {
                     </strong>
 
                     <small>
-                        ${service.duration} min ·
-                        $${service.price}
+                        ${Number(service.duration)} min ·
+                        ${formatMoney(service.price)}
                     </small>
                 </div>
             </label>
@@ -940,10 +887,10 @@ function collectSchedule() {
 }
 
 /* =====================================================
-   GUARDAR BARBERO
+   GUARDAR BARBERO EN FIRESTORE
 ===================================================== */
 
-async function saveBarber() {
+async function saveCurrentBarber() {
     if (savingBarber) {
         return;
     }
@@ -970,7 +917,6 @@ async function saveBarber() {
         showToast(
             "Selecciona al menos un servicio."
         );
-
         return;
     }
 
@@ -994,65 +940,43 @@ async function saveBarber() {
         return;
     }
 
-    const barbers = getBarbers();
-
     const status =
         barberActiveSwitch.checked
             ? "active"
             : "inactive";
 
-    const isEditing = Boolean(
-        editingBarberId
-    );
-
-    let savedBarber;
-
-    if (isEditing) {
-        const index = barbers.findIndex(
+    const previous = editingBarberId
+        ? barbersData.find(
             item => item.id === editingBarberId
+        )
+        : null;
+
+    if (editingBarberId && !previous) {
+        showToast(
+            "No se encontró el barbero."
         );
-
-        if (index === -1) {
-            showToast(
-                "No se encontró el barbero."
-            );
-
-            return;
-        }
-
-        savedBarber = {
-            ...barbers[index],
-            name,
-            phone,
-            status,
-            serviceIds: selectedServices,
-            schedule
-        };
-
-        if (commission !== null) {
-            savedBarber.commission = commission;
-        }
-
-        barbers[index] = savedBarber;
-    } else {
-        savedBarber = {
-            id: generateId("barber"),
-            name,
-            phone,
-            status,
-            serviceIds: selectedServices,
-            schedule
-        };
-
-        if (commission !== null) {
-            savedBarber.commission = commission;
-        }
-
-        barbers.push(savedBarber);
+        return;
     }
 
-    savingBarber = true;
+    const isEditing = Boolean(previous);
 
+    const record = {
+        ...(previous || {}),
+        id: previous?.id || generateId("barber"),
+        name,
+        phone,
+        status,
+        serviceIds: selectedServices,
+        schedule,
+        commission: commission ??
+            previous?.commission ??
+            50,
+        createdAt: previous?.createdAt ||
+            new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+    };
+
+    savingBarber = true;
     saveBarberButton.disabled = true;
 
     const originalButtonText =
@@ -1062,50 +986,46 @@ async function saveBarber() {
         "Guardando...";
 
     try {
-        /*
-         * Primero se conserva el registro local.
-         * Después se intenta sincronizar con Firestore.
-         */
-        saveBarbers(barbers);
+        await saveBarber(record);
 
-        const synced = await syncBarberWithFirestore(
-            savedBarber
-        );
+        const [
+            updatedBarbers,
+            updatedServices,
+            updatedAppointments
+        ] = await Promise.all([
+            getBarbers(),
+            getServices(),
+            getAppointments()
+        ]);
 
-        if (synced) {
-            showToast(
-                isEditing
-                    ? `${name} actualizado en Firebase.`
-                    : `${name} agregado a Firebase.`
-            );
-        } else {
-            showToast(
-                "Guardado localmente. Firebase no se sincronizó."
-            );
-        }
+        barbersData = updatedBarbers;
+        servicesData = updatedServices;
+        appointmentsData = updatedAppointments;
+
+        savingBarber = false;
+        closeModal();
 
         renderSummary();
         renderBarbers();
 
-        /*
-         * Restablecemos el estado antes de cerrar.
-         */
-        savingBarber = false;
-        closeModal();
+        showToast(
+            isEditing
+                ? `${name} actualizado en Firebase.`
+                : `${name} agregado a Firebase.`
+        );
+
     } catch (error) {
         console.error(
-            "Error al guardar barbero:",
+            "Error guardando barbero:",
             error
         );
 
         showToast(
-            "No se pudo completar el guardado."
+            "No se pudo guardar el barbero en Firebase."
         );
     } finally {
         savingBarber = false;
-
         saveBarberButton.disabled = false;
-
         saveBarberButton.textContent =
             originalButtonText;
     }
@@ -1116,10 +1036,7 @@ async function saveBarber() {
 ===================================================== */
 
 function validateSchedule(schedule) {
-    for (
-        const [day, info]
-        of Object.entries(schedule)
-    ) {
+    for (const [day, info] of Object.entries(schedule)) {
         if (!info.enabled) {
             continue;
         }
@@ -1128,7 +1045,6 @@ function validateSchedule(schedule) {
             showToast(
                 `Completa el horario de ${dayLabels[day]}.`
             );
-
             return false;
         }
 
@@ -1136,7 +1052,6 @@ function validateSchedule(schedule) {
             showToast(
                 `Revisa el horario de ${dayLabels[day]}.`
             );
-
             return false;
         }
     }
@@ -1219,6 +1134,23 @@ function formatTime(time) {
 }
 
 /* =====================================================
+   FORMATO DE DINERO
+===================================================== */
+
+function formatMoney(value) {
+    return new Intl.NumberFormat(
+        "es-MX",
+        {
+            style: "currency",
+            currency: "MXN",
+            maximumFractionDigits: 0
+        }
+    ).format(
+        Number(value) || 0
+    );
+}
+
+/* =====================================================
    INICIALES
 ===================================================== */
 
@@ -1261,7 +1193,6 @@ function showToast(message) {
     }
 
     toast.textContent = message;
-
     toast.classList.add("show");
 
     clearTimeout(toastTimer);
@@ -1275,4 +1206,4 @@ function showToast(message) {
    INICIAR
 ===================================================== */
 
-initialize();
+void initialize();
