@@ -2,7 +2,6 @@
 import { auth, db } from "./firebase.js";
 
 import {
-    onAuthStateChanged,
     signInWithEmailAndPassword,
     signOut,
     sendPasswordResetEmail
@@ -13,7 +12,20 @@ import {
     getDoc
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 
+/* =====================================================
+   ADMINISTRADORES AUTORIZADOS
+===================================================== */
+
 export const ADMIN_UID = "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2";
+
+export const ADMIN_UIDS = new Set([
+    ADMIN_UID,
+    "KcHcm82nZESqoHy7RrHZdyj1y2p2"
+]);
+
+/* =====================================================
+   RUTAS
+===================================================== */
 
 export const ROUTES = {
     admin: "index.html",
@@ -21,22 +33,30 @@ export const ROUTES = {
     login: "login.html"
 };
 
+/* =====================================================
+   USUARIO ACTUAL
+===================================================== */
+
 export async function waitForUser() {
     await auth.authStateReady();
     return auth.currentUser;
 }
+
+/* =====================================================
+   IDENTIFICAR ROL
+===================================================== */
 
 export async function getUserRole(user) {
     if (!user) {
         return null;
     }
 
-    // El administrador conserva su acceso habitual.
-    if (user.uid === ADMIN_UID) {
+    // Los administradores se autorizan por UID.
+    if (ADMIN_UIDS.has(user.uid)) {
         return "admin";
     }
 
-    // Verificar el perfil de acceso.
+    // Los demás usuarios deben tener un perfil válido.
     const profileSnapshot = await getDoc(
         doc(db, "users", user.uid)
     );
@@ -56,7 +76,7 @@ export async function getUserRole(user) {
         return null;
     }
 
-    // Verificar también el estado real del barbero.
+    // Verificar el estado real del barbero.
     const barberSnapshot = await getDoc(
         doc(db, "barbers", profile.barberId)
     );
@@ -74,6 +94,10 @@ export async function getUserRole(user) {
     return "barber";
 }
 
+/* =====================================================
+   INICIAR SESIÓN
+===================================================== */
+
 export async function login(email, password) {
     const credential = await signInWithEmailAndPassword(
         auth,
@@ -82,7 +106,9 @@ export async function login(email, password) {
     );
 
     try {
-        const role = await getUserRole(credential.user);
+        const role = await getUserRole(
+            credential.user
+        );
 
         if (!role) {
             throw new Error(
@@ -101,14 +127,26 @@ export async function login(email, password) {
     }
 }
 
+/* =====================================================
+   CERRAR SESIÓN
+===================================================== */
+
 export async function logout() {
     await signOut(auth);
     window.location.replace(ROUTES.login);
 }
 
+/* =====================================================
+   RESTABLECER CONTRASEÑA
+===================================================== */
+
 export async function resetPassword(email) {
     await sendPasswordResetEmail(auth, email);
 }
+
+/* =====================================================
+   PROTEGER PÁGINAS
+===================================================== */
 
 export async function protectPage(requiredRole) {
     try {
@@ -140,7 +178,7 @@ export async function protectPage(requiredRole) {
             error
         );
 
-        // No conceder acceso si falla la verificación.
+        // Ante errores, no conceder acceso.
         window.location.replace(ROUTES.login);
         return null;
     }

@@ -18,7 +18,10 @@ import {
    CONFIGURACIÓN
 ===================================================== */
 
-const ADMIN_UID = "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2";
+const ADMIN_UIDS = new Set([
+    "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2",
+    "KcHcm82nZESqoHy7RrHZdyj1y2p2"
+]);
 
 const BUSINESS_TIME_ZONE = "America/Mazatlan";
 
@@ -417,30 +420,22 @@ function getExistingSlots(appointment) {
     if (Array.isArray(appointment.occupiedSlots)) {
         const slots = appointment.occupiedSlots;
 
-        if (
-            slots.some(slot =>
-                typeof slot !== "string" ||
-                !/^\d{4}-\d{2}-\d{2}_\d{2}:\d{2}$/.test(slot)
-            ) ||
-            new Set(slots).size !== slots.length
-        ) {
-            throw new AppError(
-                409,
-                "La cita contiene reservas inconsistentes."
-            );
-        }
+       if (
+    slots.some(slot =>
+        typeof slot !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}_\d{2}:\d{2}$/.test(slot)
+    ) ||
+    new Set(slots).size !== slots.length
+) {
+    throw new AppError(
+        409,
+        "La cita contiene reservas inconsistentes."
+    );
+}
 
         return slots;
     }
 
-    /*
-     * Una cita antigua sin occupiedSlots no puede
-     * tratarse automáticamente como una reserva segura.
-     *
-     * No se inventan ni eliminan bloques anteriores.
-     * Se permite cancelarla sin liberar documentos
-     * desconocidos, pero no modificarla directamente.
-     */
     return null;
 }
 
@@ -475,13 +470,15 @@ async function getIdentity(request, auth, db) {
         );
     }
 
-    if (decoded.uid === ADMIN_UID) {
+    // Ambos administradores están autorizados.
+    if (ADMIN_UIDS.has(decoded.uid)) {
         return {
             uid: decoded.uid,
             role: "admin"
         };
     }
 
+    // Comprobar acceso de barberos.
     const profileSnap = await db
         .collection("users")
         .doc(decoded.uid)
@@ -732,10 +729,6 @@ async function createAppointment(
     );
 
     await db.runTransaction(async transaction => {
-        /*
-         * Todas las lecturas ocurren antes
-         * de cualquier escritura.
-         */
         const [
             barberSnap,
             ...reservationSnaps
@@ -916,12 +909,7 @@ async function updateAppointment(
 
         const refsByPath = new Map();
 
-        for (
-            const ref of [
-                ...oldRefs,
-                ...newRefs
-            ]
-        ) {
+        for (const ref of [...oldRefs, ...newRefs]) {
             refsByPath.set(
                 ref.path,
                 ref
@@ -932,10 +920,6 @@ async function updateAppointment(
             refsByPath.values()
         );
 
-        /*
-         * Leemos el barbero y TODAS las reservas
-         * anteriores y nuevas antes de escribir.
-         */
         const [
             barberSnap,
             ...reservationSnaps
@@ -967,10 +951,6 @@ async function updateAppointment(
             )
         );
 
-        /*
-         * Comprobar que todos los bloques antiguos
-         * realmente pertenecen a esta cita.
-         */
         for (const ref of oldRefs) {
             const snapshot =
                 reservationsByPath.get(ref.path);
@@ -986,10 +966,6 @@ async function updateAppointment(
             }
         }
 
-        /*
-         * Los nuevos bloques pueden estar libres
-         * o pertenecer a esta misma cita.
-         */
         for (const ref of newRefs) {
             const snapshot =
                 reservationsByPath.get(ref.path);
@@ -1013,19 +989,12 @@ async function updateAppointment(
             newRefs.map(ref => ref.path)
         );
 
-        /*
-         * Liberar solamente los bloques
-         * que ya no corresponden a la cita.
-         */
         for (const ref of oldRefs) {
             if (!newPaths.has(ref.path)) {
                 transaction.delete(ref);
             }
         }
 
-        /*
-         * Crear solamente las reservas nuevas.
-         */
         newRefs.forEach((ref, index) => {
             if (!oldPaths.has(ref.path)) {
                 transaction.create(
@@ -1109,11 +1078,6 @@ async function cancelAppointment(
                 appointment
             );
 
-        /*
-         * Cita antigua sin occupiedSlots:
-         * se puede cancelar, pero no intentamos
-         * borrar reservas que no conocemos.
-         */
         if (oldSlots === null) {
             transaction.update(
                 appointmentRef,
@@ -1136,19 +1100,12 @@ async function cancelAppointment(
             )
         );
 
-        /*
-         * Todas las lecturas antes de escribir.
-         */
         const snapshots = await Promise.all(
             refs.map(ref =>
                 transaction.get(ref)
             )
         );
 
-        /*
-         * Si algún bloque está ocupado por otra
-         * cita, detenemos toda la operación.
-         */
         for (const snapshot of snapshots) {
             if (
                 !snapshot.exists ||
@@ -1181,8 +1138,16 @@ async function cancelAppointment(
     };
 }
 
+/* =====================================================
+   CAMBIAR ESTADO
+===================================================== */
 
-async function changeAppointmentStatus(db, identity, id, newStatus) {
+async function changeAppointmentStatus(
+    db,
+    identity,
+    id,
+    newStatus
+) {
     requireValidId(id, "ID de cita");
 
     if (identity.role !== "admin") {
@@ -1200,16 +1165,25 @@ async function changeAppointmentStatus(db, identity, id, newStatus) {
     ]);
 
     if (!allowedStatuses.has(newStatus)) {
-        throw new AppError(400, "Estado de cita inválido.");
+        throw new AppError(
+            400,
+            "Estado de cita inválido."
+        );
     }
 
-    const appointmentRef = db.collection("appointments").doc(id);
+    const appointmentRef = db
+        .collection("appointments")
+        .doc(id);
 
     await db.runTransaction(async transaction => {
-        const appointmentSnap = await transaction.get(appointmentRef);
+        const appointmentSnap =
+            await transaction.get(appointmentRef);
 
         if (!appointmentSnap.exists) {
-            throw new AppError(404, "La cita no existe.");
+            throw new AppError(
+                404,
+                "La cita no existe."
+            );
         }
 
         const appointment = appointmentSnap.data();
@@ -1254,7 +1228,10 @@ async function changeAppointmentStatus(db, identity, id, newStatus) {
         }
 
         if (
-            (newStatus === "completed" || newStatus === "no-show") &&
+            (
+                newStatus === "completed" ||
+                newStatus === "no-show"
+            ) &&
             previousStatus !== "confirmed"
         ) {
             throw new AppError(
@@ -1273,11 +1250,17 @@ async function changeAppointmentStatus(db, identity, id, newStatus) {
         }
 
         const refs = slots.map(slot =>
-            reservationRef(db, appointment.barberId, slot)
+            reservationRef(
+                db,
+                appointment.barberId,
+                slot
+            )
         );
 
         const snapshots = await Promise.all(
-            refs.map(ref => transaction.get(ref))
+            refs.map(ref =>
+                transaction.get(ref)
+            )
         );
 
         for (const snapshot of snapshots) {
@@ -1293,21 +1276,31 @@ async function changeAppointmentStatus(db, identity, id, newStatus) {
         }
 
         if (newStatus === "no-show") {
-            refs.forEach(ref => transaction.delete(ref));
+            refs.forEach(ref => {
+                transaction.delete(ref);
+            });
         }
 
-        transaction.update(appointmentRef, {
-            status: newStatus,
-            ...(newStatus === "no-show"
-                ? { occupiedSlots: [] }
-                : {}),
-            updatedAt: FieldValue.serverTimestamp()
-        });
+        transaction.update(
+            appointmentRef,
+            {
+                status: newStatus,
+                ...(
+                    newStatus === "no-show"
+                        ? { occupiedSlots: [] }
+                        : {}
+                ),
+                updatedAt:
+                    FieldValue.serverTimestamp()
+            }
+        );
     });
 
-    return { id, status: newStatus };
+    return {
+        id,
+        status: newStatus
+    };
 }
-
 
 /* =====================================================
    FUNCIÓN NETLIFY
@@ -1319,8 +1312,7 @@ export default async function handler(request) {
             405,
             {
                 ok: false,
-                error:
-                    "Método no permitido."
+                error: "Método no permitido."
             }
         );
     }
@@ -1387,14 +1379,14 @@ export default async function handler(request) {
                 );
                 break;
 
-                case "status":
-    result = await changeAppointmentStatus(
-        db,
-        identity,
-        body.id,
-        body.status
-    );
-    break;
+            case "status":
+                result = await changeAppointmentStatus(
+                    db,
+                    identity,
+                    body.id,
+                    body.status
+                );
+                break;
 
             default:
                 throw new AppError(
@@ -1410,6 +1402,7 @@ export default async function handler(request) {
                 ...result
             }
         );
+
     } catch (error) {
         if (error instanceof AppError) {
             return json(
