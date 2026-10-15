@@ -8,7 +8,8 @@ import {
 import {
   findCustomerByPhone,
   getOrCreateCustomer,
-  getServices
+  getServices,
+  getBarbers
 } from "./firestore-storage.js";
 
 import { db } from "./firebase.js";
@@ -125,30 +126,22 @@ async function initialize() {
 ===================================================== */
 
 async function populateSelectors() {
-  const [snapshot, servicesSnapshot] = await Promise.all([
-    getDocs(collection(db, "barbers")),
-    getServices()
+  const [services, barbers] = await Promise.all([
+    getServices(),
+    getBarbers()
   ]);
 
-  firebaseServices = servicesSnapshot;
+  firebaseServices = services;
 
-  /*
-     Conservar todos los barberos en memoria
-     permite mostrar nombres históricos
-     incluso si un barbero ya no está activo.
-  */
-
-  firebaseBarbers = snapshot.docs
-    .map(document => ({
-      ...document.data(),
-      id: document.id
-    }))
-    .sort((a, b) =>
+  firebaseBarbers = [...barbers].sort(
+    (a, b) =>
       (a.name || "").localeCompare(
         b.name || "",
         "es"
       )
-    );
+  );
+
+  const previousBarberId = barberSelect.value;
 
   barberSelect.replaceChildren();
 
@@ -165,46 +158,48 @@ async function populateSelectors() {
     );
   }
 
-  if (!activeBarbers.length) {
-    console.warn(
-      "No hay barberos activos para crear citas."
-    );
-
+  if (activeBarbers.length === 0) {
     barberSelect.add(
-      new Option(
-        "Sin barberos activos",
-        ""
-      )
+      new Option("Sin barberos activos", "")
     );
+  }
+
+  if (
+    activeBarbers.some(
+      barber => barber.id === previousBarberId
+    )
+  ) {
+    barberSelect.value = previousBarberId;
+  } else {
+    barberSelect.value = activeBarbers[0]?.id || "";
   }
 
   updateServiceOptions();
 }
 
 function updateServiceOptions() {
-  const barberId = barberSelect.value;
-
   const barber = firebaseBarbers.find(
-    item => item.id === barberId
+    item => item.id === barberSelect.value
   );
 
   const previousServiceId = serviceSelect.value;
 
-  const assignedIds = Array.isArray(barber?.serviceIds)
+  const assignedServiceIds = Array.isArray(barber?.serviceIds)
     ? barber.serviceIds
     : [];
 
   const allowedServices = firebaseServices.filter(
     service =>
       service.status === "active" &&
-      assignedIds.includes(service.id)
+      assignedServiceIds.includes(service.id)
   );
 
   const options = allowedServices.map(
-    service => new Option(
-      `${service.name} · $${service.price} · ${service.duration} min`,
-      service.id
-    )
+    service =>
+      new Option(
+        `${service.name} · $${service.price} · ${service.duration} min`,
+        service.id
+      )
   );
 
   if (options.length === 0) {
@@ -221,10 +216,8 @@ function updateServiceOptions() {
     )
   ) {
     serviceSelect.value = previousServiceId;
-  } else if (allowedServices.length > 0) {
-    serviceSelect.value = allowedServices[0].id;
   } else {
-    serviceSelect.value = "";
+    serviceSelect.value = allowedServices[0]?.id || "";
   }
 
   serviceSelect.disabled = allowedServices.length === 0;
@@ -534,6 +527,8 @@ function cleanBookingURL() {
 
 let openingAppointmentModal = false;
 
+let openingAppointmentModal = false;
+
 async function openModal() {
   if (openingAppointmentModal) {
     return;
@@ -551,10 +546,7 @@ async function openModal() {
     }, 50);
 
   } catch (error) {
-    console.error(
-      "Error al abrir nueva cita:",
-      error
-    );
+    console.error("Error al abrir nueva cita:", error);
 
     showToast(
       "No se pudo abrir el formulario de citas."
@@ -600,24 +592,20 @@ async function resetForm() {
   barberSelect.disabled = true;
 
   try {
-    const [services, snapshot] = await Promise.all([
+    const [services, barbers] = await Promise.all([
       getServices(),
-      getDocs(collection(db, "barbers"))
+      getBarbers()
     ]);
 
     firebaseServices = services;
 
-    firebaseBarbers = snapshot.docs
-      .map(document => ({
-        ...document.data(),
-        id: document.id
-      }))
-      .sort((a, b) =>
+    firebaseBarbers = [...barbers].sort(
+      (a, b) =>
         (a.name || "").localeCompare(
           b.name || "",
           "es"
         )
-      );
+    );
 
     const activeBarbers = firebaseBarbers.filter(
       barber => barber.status === "active"
@@ -646,7 +634,7 @@ async function resetForm() {
 
   } catch (error) {
     console.error(
-      "Error al cargar barberos y servicios:",
+      "Error al actualizar barberos y servicios:",
       error
     );
 
@@ -657,7 +645,7 @@ async function resetForm() {
     serviceSelect.disabled = true;
 
     showToast(
-      "No se pudieron cargar los servicios de Firebase."
+      "No se pudieron actualizar los servicios."
     );
 
   } finally {
