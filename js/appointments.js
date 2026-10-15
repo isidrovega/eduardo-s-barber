@@ -527,8 +527,6 @@ function cleanBookingURL() {
 
 let openingAppointmentModal = false;
 
-let openingAppointmentModal = false;
-
 async function openModal() {
   if (openingAppointmentModal) {
     return;
@@ -536,20 +534,24 @@ async function openModal() {
 
   openingAppointmentModal = true;
 
+  // Mostrar el formulario inmediatamente.
+  modal.classList.remove("hidden");
+
   try {
     await resetForm();
-
-    modal.classList.remove("hidden");
 
     setTimeout(() => {
       phoneInput.focus();
     }, 50);
 
   } catch (error) {
-    console.error("Error al abrir nueva cita:", error);
+    console.error(
+      "Error al preparar el formulario de citas:",
+      error
+    );
 
     showToast(
-      "No se pudo abrir el formulario de citas."
+      "No se pudieron cargar los datos de la cita. Intenta nuevamente."
     );
 
   } finally {
