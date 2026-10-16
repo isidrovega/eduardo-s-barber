@@ -5,7 +5,8 @@ import {
 } from "./appointment-booking.js";
 
 import {
-    normalizePhone
+    normalizePhone,
+    getServices
 } from "./firestore-storage.js";
 
 import {
@@ -13,7 +14,6 @@ import {
     saveBarberCustomer
 } from "./barber-customers.js";
 
-import { services } from "./data.js";
 import { auth, db } from "./firebase.js";
 
 import {
@@ -29,21 +29,19 @@ import {
    EDUARDO'S BARBERSHOP
    FORMULARIO DE CITAS DEL BARBERO
 
-   FUNCIONES:
-   - Crear citas.
-   - Modificar citas.
-   - Consultar disponibilidad en tiempo real.
-   - Ocultar horarios ocupados.
-   - Respetar la duración de cada servicio.
-   - Buscar clientes mediante Netlify.
-   - Registrar clientes mediante Netlify.
-   - Evitar listeners duplicados.
+   - Crear citas
+   - Modificar citas
+   - Cargar servicios asignados desde Firebase
+   - Consultar disponibilidad en tiempo real
+   - Ocultar horarios ocupados
+   - Respetar duración de servicios
+   - Buscar y registrar clientes mediante Netlify
+   - Evitar listeners duplicados
 ========================================================= */
 
 const TIME_INTERVAL = 30;
 
-const BUSINESS_TIME_ZONE =
-    "America/Mazatlan";
+const BUSINESS_TIME_ZONE = "America/Mazatlan";
 
 const DAY_NAMES = [
     "sunday",
@@ -68,24 +66,18 @@ let activeCleanup = null;
 ========================================================= */
 
 function getElement(id) {
-    const element =
-        document.getElementById(id);
+    const element = document.getElementById(id);
 
     if (!element) {
-        throw new Error(
-            `Falta el elemento ${id}.`
-        );
+        throw new Error(`Falta el elemento ${id}.`);
     }
 
     return element;
 }
 
 function minutesToTime(total) {
-    const hours =
-        Math.floor(total / 60);
-
-    const minutes =
-        total % 60;
+    const hours = Math.floor(total / 60);
+    const minutes = total % 60;
 
     return (
         String(hours).padStart(2, "0") +
@@ -102,8 +94,9 @@ function timeToMinutes(value) {
         return NaN;
     }
 
-    const [hours, minutes] =
-        value.split(":").map(Number);
+    const [hours, minutes] = value
+        .split(":")
+        .map(Number);
 
     if (
         hours < 0 ||
@@ -118,36 +111,27 @@ function timeToMinutes(value) {
 }
 
 function getBusinessDateTime() {
-    const parts =
-        new Intl.DateTimeFormat(
-            "en-US",
-            {
-                timeZone:
-                    BUSINESS_TIME_ZONE,
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit",
-                hour: "2-digit",
-                minute: "2-digit",
-                hourCycle: "h23"
-            }
-        ).formatToParts(new Date());
+    const parts = new Intl.DateTimeFormat(
+        "en-US",
+        {
+            timeZone: BUSINESS_TIME_ZONE,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23"
+        }
+    ).formatToParts(new Date());
 
-    const values =
-        Object.fromEntries(
-            parts
-                .filter(
-                    part =>
-                        part.type !==
-                        "literal"
-                )
-                .map(
-                    part => [
-                        part.type,
-                        part.value
-                    ]
-                )
-        );
+    const values = Object.fromEntries(
+        parts
+            .filter(part => part.type !== "literal")
+            .map(part => [
+                part.type,
+                part.value
+            ])
+    );
 
     return {
         date:
@@ -164,9 +148,7 @@ function getBusinessDateTime() {
 function getDayName(dateString) {
     if (
         typeof dateString !== "string" ||
-        !/^\d{4}-\d{2}-\d{2}$/.test(
-            dateString
-        )
+        !/^\d{4}-\d{2}-\d{2}$/.test(dateString)
     ) {
         return null;
     }
@@ -175,22 +157,15 @@ function getDayName(dateString) {
         `${dateString}T12:00:00Z`
     );
 
-    if (
-        Number.isNaN(
-            date.getTime()
-        )
-    ) {
+    if (Number.isNaN(date.getTime())) {
         return null;
     }
 
-    return DAY_NAMES[
-        date.getUTCDay()
-    ];
+    return DAY_NAMES[date.getUTCDay()];
 }
 
 function isValidPhone(value) {
-    const normalized =
-        normalizePhone(value);
+    const normalized = normalizePhone(value);
 
     return (
         normalized.length >= 7 &&
@@ -198,50 +173,9 @@ function isValidPhone(value) {
     );
 }
 
-function getServiceDuration(
-    selectedServiceId
-) {
-    const service =
-        services.find(
-            item =>
-                item.id ===
-                selectedServiceId
-        );
-
-    return (
-        Number(service?.duration) ||
-        30
-    );
-}
-
-function getAppointmentDuration(
-    appointment
-) {
-    const explicitDuration =
-        Number(
-            appointment.duration
-        );
-
-    if (
-        Number.isFinite(
-            explicitDuration
-        ) &&
-        explicitDuration > 0
-    ) {
-        return explicitDuration;
-    }
-
-    return getServiceDuration(
-        appointment.serviceId
-    );
-}
-
-function isBlockingAppointment(
-    appointment
-) {
+function isBlockingAppointment(appointment) {
     return BLOCKING_STATUSES.has(
-        appointment.status ||
-        "pending"
+        appointment.status || "pending"
     );
 }
 
@@ -261,31 +195,19 @@ function appointmentsOverlap(
    INICIALIZAR FORMULARIO
 ========================================================= */
 
-export function initializeBarberAppointmentForm(
-    barber
-) {
-    if (
-        !barber ||
-        !Array.isArray(
-            barber.serviceIds
-        )
-    ) {
+export function initializeBarberAppointmentForm(barber) {
+    if (!barber || !Array.isArray(barber.serviceIds)) {
         throw new Error(
             "No se pudieron cargar los servicios del barbero."
         );
     }
-
-    /*
-       Eliminar los listeners de una
-       inicialización anterior.
-    */
 
     if (activeCleanup) {
         activeCleanup();
     }
 
     /* =====================================================
-       ELEMENTOS DEL FORMULARIO
+       ELEMENTOS
     ===================================================== */
 
     const form = getElement(
@@ -345,14 +267,15 @@ export function initializeBarberAppointmentForm(
     );
 
     /* =====================================================
-       ESTADO INTERNO
+       ESTADO
     ===================================================== */
 
-    const controller =
-        new AbortController();
+    const controller = new AbortController();
+    const { signal } = controller;
 
-    const { signal } =
-        controller;
+    let services = [];
+
+    let servicesLoaded = false;
 
     let appointments = [];
 
@@ -364,57 +287,170 @@ export function initializeBarberAppointmentForm(
 
     let customerLookupVersion = 0;
 
-    let unsubscribeAppointments =
-        null;
+    let unsubscribeAppointments = null;
 
-    let barberId =
-        barber.id || null;
+    let barberId = barber.id || null;
 
     /* =====================================================
-       CARGAR SERVICIOS
+       SERVICIOS
     ===================================================== */
 
-    serviceId.replaceChildren(
-        new Option(
-            "Selecciona un servicio",
-            ""
-        )
-    );
-
-    services
-        .filter(
+    function getService(selectedServiceId) {
+        return services.find(
             service =>
-                barber.serviceIds.includes(
-                    service.id
-                )
+                String(service.id) ===
+                String(selectedServiceId)
+        );
+    }
+
+    function getServiceDuration(selectedServiceId) {
+        const service = getService(selectedServiceId);
+
+        const duration = Number(service?.duration);
+
+        return (
+            Number.isFinite(duration) &&
+            duration > 0
         )
-        .forEach(
-            service => {
+            ? duration
+            : 30;
+    }
+
+    function getAppointmentDuration(appointment) {
+        const explicitDuration = Number(
+            appointment.duration
+        );
+
+        if (
+            Number.isFinite(explicitDuration) &&
+            explicitDuration > 0
+        ) {
+            return explicitDuration;
+        }
+
+        return getServiceDuration(
+            appointment.serviceId
+        );
+    }
+
+    async function loadAssignedServices() {
+        serviceId.replaceChildren(
+            new Option("Cargando servicios...", "")
+        );
+
+        serviceId.disabled = true;
+        servicesLoaded = false;
+
+        try {
+            const firebaseServices = await getServices();
+
+            if (disposed) {
+                return;
+            }
+
+            const assignedIds = new Set(
+                barber.serviceIds.map(String)
+            );
+
+            services = (
+                Array.isArray(firebaseServices)
+                    ? firebaseServices
+                    : []
+            ).filter(
+                service =>
+                    service.status === "active" &&
+                    assignedIds.has(String(service.id))
+            );
+
+            servicesLoaded = true;
+
+            serviceId.replaceChildren(
+                new Option(
+                    "Selecciona un servicio",
+                    ""
+                )
+            );
+
+            services.forEach(service => {
+                const price = Number(service.price);
+                const duration = Number(service.duration);
+
+                const priceText = Number.isFinite(price)
+                    ? ` · $${price}`
+                    : "";
+
+                const durationText = (
+                    Number.isFinite(duration) &&
+                    duration > 0
+                )
+                    ? ` · ${duration} min`
+                    : "";
+
                 serviceId.add(
                     new Option(
-                        `${service.name} (${service.duration} min)`,
+                        `${service.name}${priceText}${durationText}`,
                         service.id
                     )
                 );
+            });
+
+            if (services.length === 0) {
+                serviceId.replaceChildren(
+                    new Option(
+                        "Sin servicios asignados",
+                        ""
+                    )
+                );
+
+                serviceId.disabled = true;
+
+                message.textContent =
+                    "No tienes servicios activos asignados. " +
+                    "Contacta al administrador.";
+
+                return;
             }
-        );
+
+            serviceId.disabled = false;
+
+            renderTimes();
+
+        } catch (error) {
+            if (disposed) {
+                return;
+            }
+
+            console.error(
+                "Error cargando servicios:",
+                error
+            );
+
+            servicesLoaded = false;
+
+            serviceId.replaceChildren(
+                new Option(
+                    "No se pudieron cargar los servicios",
+                    ""
+                )
+            );
+
+            serviceId.disabled = true;
+
+            message.textContent =
+                "No se pudieron consultar los servicios de Firebase.";
+        }
+    }
 
     /* =====================================================
        CITAS QUE BLOQUEAN HORARIOS
     ===================================================== */
 
-    function getOccupiedAppointments(
-        selectedDate
-    ) {
+    function getOccupiedAppointments(selectedDate) {
         return appointments.filter(
             appointment =>
-                appointment.date ===
-                    selectedDate &&
-                isBlockingAppointment(
-                    appointment
-                ) &&
-                appointment.id !==
-                    appointmentId.value
+                appointment.date === selectedDate &&
+                isBlockingAppointment(appointment) &&
+                appointment.id !== appointmentId.value
         );
     }
 
@@ -431,40 +467,24 @@ export function initializeBarberAppointmentForm(
             return false;
         }
 
-        const end =
-            start + duration;
+        const end = start + duration;
 
         const occupiedAppointments =
-            getOccupiedAppointments(
-                selectedDate
-            );
+            getOccupiedAppointments(selectedDate);
 
         return !occupiedAppointments.some(
             appointment => {
-                const occupiedStart =
-                    timeToMinutes(
-                        appointment.time
-                    );
+                const occupiedStart = timeToMinutes(
+                    appointment.time
+                );
 
-                if (
-                    !Number.isFinite(
-                        occupiedStart
-                    )
-                ) {
-                    /*
-                       No considerar libre
-                       un horario si existe
-                       una cita con hora inválida.
-                    */
-
+                if (!Number.isFinite(occupiedStart)) {
                     return true;
                 }
 
                 const occupiedEnd =
                     occupiedStart +
-                    getAppointmentDuration(
-                        appointment
-                    );
+                    getAppointmentDuration(appointment);
 
                 return appointmentsOverlap(
                     start,
@@ -477,12 +497,11 @@ export function initializeBarberAppointmentForm(
     }
 
     /* =====================================================
-       MOSTRAR HORARIOS DISPONIBLES
+       HORARIOS DISPONIBLES
     ===================================================== */
 
     function renderTimes() {
-        const previousTime =
-            time.value;
+        const previousTime = time.value;
 
         time.replaceChildren(
             new Option(
@@ -493,61 +512,54 @@ export function initializeBarberAppointmentForm(
 
         time.disabled = true;
 
-        if (
-            !date.value ||
-            !serviceId.value
-        ) {
+        if (!date.value || !serviceId.value) {
+            return;
+        }
+
+        if (!servicesLoaded) {
+            message.textContent =
+                "Cargando servicios...";
+
             return;
         }
 
         if (!appointmentsLoaded) {
-            message.textContent =
-                appointmentsError
-                    ? "No se pudo consultar la disponibilidad."
-                    : "Consultando horarios disponibles...";
+            message.textContent = appointmentsError
+                ? "No se pudo consultar la disponibilidad."
+                : "Consultando horarios disponibles...";
 
             return;
         }
 
-        const dayName =
-            getDayName(
-                date.value
-            );
+        const dayName = getDayName(date.value);
 
-        const schedule =
-            barber.schedule?.[
-                dayName
-            ];
+        const schedule = barber.schedule?.[dayName];
 
-        if (
-            !schedule?.enabled
-        ) {
+        if (!schedule?.enabled) {
             message.textContent =
                 "El barbero no trabaja ese día.";
 
             return;
         }
 
-        const selectedService =
-            services.find(
-                service =>
-                    service.id ===
-                    serviceId.value
-            );
+        const selectedService = getService(
+            serviceId.value
+        );
 
         if (!selectedService) {
+            message.textContent =
+                "El servicio seleccionado no está disponible.";
+
             return;
         }
 
-        const opening =
-            timeToMinutes(
-                schedule.start
-            );
+        const opening = timeToMinutes(
+            schedule.start
+        );
 
-        const closing =
-            timeToMinutes(
-                schedule.end
-            );
+        const closing = timeToMinutes(
+            schedule.end
+        );
 
         if (
             !Number.isFinite(opening) ||
@@ -560,36 +572,38 @@ export function initializeBarberAppointmentForm(
             return;
         }
 
-        const now =
-            getBusinessDateTime();
+        const now = getBusinessDateTime();
 
-        const selectedDate =
-            date.value;
+        const selectedDate = date.value;
 
-        const editing =
-            Boolean(
-                appointmentId.value
-            );
+        const editing = Boolean(
+            appointmentId.value
+        );
 
-        if (
-            selectedDate <
-            now.date
-        ) {
+        if (selectedDate < now.date) {
             message.textContent =
                 "No se pueden agendar citas en fechas pasadas.";
 
             return;
         }
 
-        const currentMinutes =
-            timeToMinutes(
-                now.time
-            );
+        const currentMinutes = timeToMinutes(
+            now.time
+        );
 
-        const duration =
-            Number(
-                selectedService.duration
-            );
+        const duration = Number(
+            selectedService.duration
+        );
+
+        if (
+            !Number.isFinite(duration) ||
+            duration <= 0
+        ) {
+            message.textContent =
+                "La duración del servicio no es válida.";
+
+            return;
+        }
 
         let availableCount = 0;
 
@@ -598,29 +612,14 @@ export function initializeBarberAppointmentForm(
             start + duration <= closing;
             start += TIME_INTERVAL
         ) {
-            const value =
-                minutesToTime(
-                    start
-                );
-
-            /*
-               Omitir horarios pasados
-               del día actual.
-            */
+            const value = minutesToTime(start);
 
             if (
-                selectedDate ===
-                    now.date &&
-                start <=
-                    currentMinutes
+                selectedDate === now.date &&
+                start <= currentMinutes
             ) {
                 continue;
             }
-
-            /*
-               Comprobar todo el intervalo
-               que ocupará el servicio.
-            */
 
             if (
                 !isTimeAvailable(
@@ -633,44 +632,28 @@ export function initializeBarberAppointmentForm(
             }
 
             time.add(
-                new Option(
-                    value,
-                    value
-                )
+                new Option(value, value)
             );
 
             availableCount++;
         }
 
-        time.disabled =
-            availableCount === 0;
-
-        /*
-           Conservar la selección anterior
-           si sigue estando disponible.
-        */
+        time.disabled = availableCount === 0;
 
         if (
             previousTime &&
-            Array.from(
-                time.options
-            ).some(
+            Array.from(time.options).some(
                 option =>
-                    option.value ===
-                    previousTime
+                    option.value === previousTime
             )
         ) {
-            time.value =
-                previousTime;
+            time.value = previousTime;
         }
 
-        if (
-            availableCount === 0
-        ) {
-            message.textContent =
-                editing
-                    ? "No hay otros horarios disponibles para esta cita."
-                    : "No hay horarios disponibles para ese día.";
+        if (availableCount === 0) {
+            message.textContent = editing
+                ? "No hay otros horarios disponibles para esta cita."
+                : "No hay horarios disponibles para ese día.";
 
         } else if (
             message.textContent.includes(
@@ -694,19 +677,13 @@ export function initializeBarberAppointmentForm(
        ESCUCHAR CITAS EN TIEMPO REAL
     ===================================================== */
 
-    function listenToAppointments(
-        currentBarberId
-    ) {
+    function listenToAppointments(currentBarberId) {
         if (
             !currentBarberId ||
-            typeof currentBarberId !==
-                "string"
+            typeof currentBarberId !== "string"
         ) {
-            appointmentsLoaded =
-                false;
-
-            appointmentsError =
-                true;
+            appointmentsLoaded = false;
+            appointmentsError = true;
 
             message.textContent =
                 "No se pudo identificar al barbero.";
@@ -714,147 +691,108 @@ export function initializeBarberAppointmentForm(
             return;
         }
 
-        barberId =
-            currentBarberId;
+        barberId = currentBarberId;
 
-        if (
-            unsubscribeAppointments
-        ) {
+        if (unsubscribeAppointments) {
             unsubscribeAppointments();
         }
 
-        appointmentsLoaded =
-            false;
+        appointmentsLoaded = false;
+        appointmentsError = false;
 
-        appointmentsError =
-            false;
+        const appointmentsQuery = query(
+            collection(db, "appointments"),
+            where(
+                "barberId",
+                "==",
+                barberId
+            )
+        );
 
-        const appointmentsQuery =
-            query(
-                collection(
-                    db,
-                    "appointments"
-                ),
-                where(
-                    "barberId",
-                    "==",
-                    barberId
-                )
-            );
-
-        unsubscribeAppointments =
-            onSnapshot(
-                appointmentsQuery,
-                snapshot => {
-                    if (
-                        disposed
-                    ) {
-                        return;
-                    }
-
-                    appointments =
-                        snapshot.docs.map(
-                            document => ({
-                                ...document.data(),
-                                id:
-                                    document.id
-                            })
-                        );
-
-                    appointmentsLoaded =
-                        true;
-
-                    appointmentsError =
-                        false;
-
-                    renderTimes();
-                },
-                error => {
-                    if (
-                        disposed
-                    ) {
-                        return;
-                    }
-
-                    console.error(
-                        "Error consultando horarios:",
-                        error
-                    );
-
-                    appointmentsLoaded =
-                        false;
-
-                    appointmentsError =
-                        true;
-
-                    renderTimes();
-
-                    message.textContent =
-                        "No se pudo consultar la disponibilidad de citas.";
+        unsubscribeAppointments = onSnapshot(
+            appointmentsQuery,
+            snapshot => {
+                if (disposed) {
+                    return;
                 }
-            );
+
+                appointments = snapshot.docs.map(
+                    document => ({
+                        ...document.data(),
+                        id: document.id
+                    })
+                );
+
+                appointmentsLoaded = true;
+                appointmentsError = false;
+
+                renderTimes();
+            },
+            error => {
+                if (disposed) {
+                    return;
+                }
+
+                console.error(
+                    "Error consultando horarios:",
+                    error
+                );
+
+                appointmentsLoaded = false;
+                appointmentsError = true;
+
+                renderTimes();
+
+                message.textContent =
+                    "No se pudo consultar la disponibilidad de citas.";
+            }
+        );
     }
 
     /* =====================================================
-       IDENTIFICAR AL BARBERO
+       IDENTIFICAR BARBERO
     ===================================================== */
 
     async function initializeAvailability() {
-        if (
-            barberId
-        ) {
-            listenToAppointments(
-                barberId
-            );
-
+        if (barberId) {
+            listenToAppointments(barberId);
             return;
         }
 
         try {
             await auth.authStateReady();
 
-            const user =
-                auth.currentUser;
+            const user = auth.currentUser;
 
-            if (
-                !user
-            ) {
+            if (!user) {
                 throw new Error(
                     "No hay una sesión activa."
                 );
             }
 
-            const profileSnapshot =
-                await getDoc(
-                    doc(
-                        db,
-                        "users",
-                        user.uid
-                    )
-                );
+            const profileSnapshot = await getDoc(
+                doc(
+                    db,
+                    "users",
+                    user.uid
+                )
+            );
 
-            if (
-                !profileSnapshot.exists()
-            ) {
+            if (!profileSnapshot.exists()) {
                 throw new Error(
                     "No se encontró el perfil del barbero."
                 );
             }
 
-            const profile =
-                profileSnapshot.data();
+            const profile = profileSnapshot.data();
 
-            if (
-                !profile.barberId
-            ) {
+            if (!profile.barberId) {
                 throw new Error(
                     "El perfil no tiene un barbero asignado."
                 );
             }
 
-            if (
-                disposed
-            ) {
+            if (disposed) {
                 return;
             }
 
@@ -863,9 +801,7 @@ export function initializeBarberAppointmentForm(
             );
 
         } catch (error) {
-            if (
-                disposed
-            ) {
+            if (disposed) {
                 return;
             }
 
@@ -874,11 +810,8 @@ export function initializeBarberAppointmentForm(
                 error
             );
 
-            appointmentsLoaded =
-                false;
-
-            appointmentsError =
-                true;
+            appointmentsLoaded = false;
+            appointmentsError = true;
 
             message.textContent =
                 error.message ||
@@ -887,45 +820,28 @@ export function initializeBarberAppointmentForm(
     }
 
     /* =====================================================
-       BUSCAR CLIENTE POR TELÉFONO
-       MEDIANTE NETLIFY
+       BUSCAR CLIENTE
     ===================================================== */
 
     async function detectCustomer() {
-        const currentPhone =
-            phone.value.trim();
+        const currentPhone = phone.value.trim();
 
-        const version =
-            ++customerLookupVersion;
+        const version = ++customerLookupVersion;
 
-        if (
-            !isValidPhone(
-                currentPhone
-            )
-        ) {
-            if (
-                !saving
-            ) {
-                message.textContent =
-                    "";
+        if (!isValidPhone(currentPhone)) {
+            if (!saving) {
+                message.textContent = "";
             }
 
             return;
         }
 
-        if (
-            !saving
-        ) {
+        if (!saving) {
             message.textContent =
                 "Buscando cliente...";
         }
 
         try {
-            /*
-               Ya no consultamos Firestore
-               directamente desde el barbero.
-            */
-
             const customer =
                 await findBarberCustomerByPhone(
                     currentPhone
@@ -933,35 +849,19 @@ export function initializeBarberAppointmentForm(
 
             if (
                 disposed ||
-                version !==
-                    customerLookupVersion ||
-                normalizePhone(
-                    phone.value
-                ) !==
-                    normalizePhone(
-                        currentPhone
-                    )
+                version !== customerLookupVersion ||
+                normalizePhone(phone.value) !==
+                    normalizePhone(currentPhone)
             ) {
                 return;
             }
 
-            if (
-                saving
-            ) {
+            if (saving) {
                 return;
             }
 
-            if (
-                customer
-            ) {
-                /*
-                   Completar el nombre
-                   únicamente si está vacío.
-                */
-
-                if (
-                    !clientName.value.trim()
-                ) {
+            if (customer) {
+                if (!clientName.value.trim()) {
                     clientName.value =
                         customer.name || "";
                 }
@@ -983,8 +883,7 @@ export function initializeBarberAppointmentForm(
 
             if (
                 !disposed &&
-                version ===
-                    customerLookupVersion &&
+                version === customerLookupVersion &&
                 !saving
             ) {
                 message.textContent =
@@ -1003,17 +902,12 @@ export function initializeBarberAppointmentForm(
 
         form.reset();
 
-        appointmentId.value =
-            "";
+        appointmentId.value = "";
 
-        const now =
-            getBusinessDateTime();
+        const now = getBusinessDateTime();
 
-        date.min =
-            now.date;
-
-        date.value =
-            now.date;
+        date.min = now.date;
+        date.value = now.date;
 
         title.textContent =
             "Agendar cita";
@@ -1021,8 +915,7 @@ export function initializeBarberAppointmentForm(
         saveButton.textContent =
             "Guardar cita";
 
-        message.textContent =
-            "";
+        message.textContent = "";
 
         renderTimes();
     }
@@ -1031,15 +924,11 @@ export function initializeBarberAppointmentForm(
        EDITAR CITA
     ===================================================== */
 
-    function handleEditAppointment(
-        event
-    ) {
+    function handleEditAppointment(event) {
         const appointment =
             event.detail?.appointment;
 
-        if (
-            !appointment?.id
-        ) {
+        if (!appointment?.id) {
             return;
         }
 
@@ -1049,61 +938,39 @@ export function initializeBarberAppointmentForm(
             appointment.id;
 
         clientName.value =
-            appointment.clientName ||
-            "";
+            appointment.clientName || "";
 
         phone.value =
-            appointment.phone ||
-            "";
+            appointment.phone || "";
 
         serviceId.value =
-            appointment.serviceId ||
-            "";
+            appointment.serviceId || "";
 
         date.value =
-            appointment.date ||
-            "";
+            appointment.date || "";
 
         origin.value =
-            appointment.origin ||
-            "phone";
+            appointment.origin || "phone";
 
         notes.value =
-            appointment.notes ||
-            "";
+            appointment.notes || "";
 
-        date.min =
-            "";
-
-        /*
-           La cita que estamos editando
-           no bloquea su propia hora.
-        */
+        date.min = "";
 
         renderTimes();
 
         const originalTime =
-            appointment.time ||
-            "";
+            appointment.time || "";
 
         const originalTimeAvailable =
-            Array.from(
-                time.options
-            ).some(
+            Array.from(time.options).some(
                 option =>
-                    option.value ===
-                    originalTime
+                    option.value === originalTime
             );
 
-        if (
-            originalTimeAvailable
-        ) {
-            time.value =
-                originalTime;
-        } else {
-            time.value =
-                "";
-        }
+        time.value = originalTimeAvailable
+            ? originalTime
+            : "";
 
         title.textContent =
             "Modificar cita";
@@ -1117,9 +984,9 @@ export function initializeBarberAppointmentForm(
         ) {
             message.textContent =
                 "Selecciona un horario disponible para modificar esta cita.";
+
         } else {
-            message.textContent =
-                "";
+            message.textContent = "";
         }
 
         form.scrollIntoView({
@@ -1130,29 +997,27 @@ export function initializeBarberAppointmentForm(
 
     /* =====================================================
        GUARDAR CITA
-       Y REGISTRAR CLIENTE MEDIANTE NETLIFY
     ===================================================== */
 
-    async function handleSubmit(
-        event
-    ) {
+    async function handleSubmit(event) {
         event.preventDefault();
 
-        if (
-            saving
-        ) {
+        if (saving) {
             return;
         }
 
-        if (
-            !form.reportValidity()
-        ) {
+        if (!form.reportValidity()) {
             return;
         }
 
-        if (
-            !appointmentsLoaded
-        ) {
+        if (!servicesLoaded) {
+            message.textContent =
+                "Espera a que se carguen los servicios.";
+
+            return;
+        }
+
+        if (!appointmentsLoaded) {
             message.textContent =
                 "Espera a que se carguen los horarios disponibles.";
 
@@ -1168,9 +1033,7 @@ export function initializeBarberAppointmentForm(
         const editingId =
             appointmentId.value.trim();
 
-        if (
-            !nameValue
-        ) {
+        if (!nameValue) {
             message.textContent =
                 "Ingresa el nombre del cliente.";
 
@@ -1179,11 +1042,7 @@ export function initializeBarberAppointmentForm(
             return;
         }
 
-        if (
-            !isValidPhone(
-                phoneValue
-            )
-        ) {
+        if (!isValidPhone(phoneValue)) {
             message.textContent =
                 "Ingresa un teléfono válido.";
 
@@ -1203,38 +1062,25 @@ export function initializeBarberAppointmentForm(
             return;
         }
 
-        const selectedService =
-            services.find(
-                service =>
-                    service.id ===
-                    serviceId.value
-            );
+        const selectedService = getService(
+            serviceId.value
+        );
 
-        if (
-            !selectedService
-        ) {
+        if (!selectedService) {
             message.textContent =
                 "El servicio seleccionado no es válido.";
 
             return;
         }
 
-        const selectedStart =
-            timeToMinutes(
-                time.value
-            );
-
-        /*
-           Comprobar nuevamente la
-           disponibilidad antes de guardar.
-        */
+        const selectedStart = timeToMinutes(
+            time.value
+        );
 
         if (
             !isTimeAvailable(
                 selectedStart,
-                Number(
-                    selectedService.duration
-                ),
+                Number(selectedService.duration),
                 date.value
             )
         ) {
@@ -1247,56 +1093,30 @@ export function initializeBarberAppointmentForm(
         }
 
         const appointment = {
-            clientName:
-                nameValue,
-
-            phone:
-                phoneValue,
-
-            serviceId:
-                serviceId.value,
-
-            date:
-                date.value,
-
-            time:
-                time.value,
-
-            origin:
-                origin.value,
-
-            notes:
-                notes.value.trim()
+            clientName: nameValue,
+            phone: phoneValue,
+            serviceId: serviceId.value,
+            date: date.value,
+            time: time.value,
+            origin: origin.value,
+            notes: notes.value.trim()
         };
 
         ++customerLookupVersion;
 
-        saving =
-            true;
+        saving = true;
 
-        saveButton.disabled =
-            true;
+        saveButton.disabled = true;
+        resetButton.disabled = true;
 
-        resetButton.disabled =
-            true;
+        message.textContent = editingId
+            ? "Guardando cambios..."
+            : "Guardando cita...";
 
-        message.textContent =
-            editingId
-                ? "Guardando cambios..."
-                : "Guardando cita...";
-
-        let appointmentSaved =
-            false;
+        let appointmentSaved = false;
 
         try {
-            /*
-               Primero guardamos la cita
-               usando el sistema existente.
-            */
-
-            if (
-                editingId
-            ) {
+            if (editingId) {
                 await updateAppointment(
                     editingId,
                     appointment
@@ -1307,14 +1127,7 @@ export function initializeBarberAppointmentForm(
                 );
             }
 
-            appointmentSaved =
-                true;
-
-            /*
-               Después registramos o
-               reconocemos al cliente
-               mediante Netlify.
-            */
+            appointmentSaved = true;
 
             message.textContent =
                 "Cita guardada. Registrando cliente...";
@@ -1326,10 +1139,9 @@ export function initializeBarberAppointmentForm(
 
             resetForm();
 
-            message.textContent =
-                editingId
-                    ? "Cita modificada y cliente registrado correctamente."
-                    : "Cita y cliente guardados correctamente.";
+            message.textContent = editingId
+                ? "Cita modificada y cliente registrado correctamente."
+                : "Cita y cliente guardados correctamente.";
 
         } catch (error) {
             console.error(
@@ -1337,22 +1149,12 @@ export function initializeBarberAppointmentForm(
                 error
             );
 
-            if (
-                appointmentSaved
-            ) {
-                /*
-                   No reintentar la cita:
-                   ya fue guardada.
-                */
-
+            if (appointmentSaved) {
                 resetForm();
 
                 message.textContent =
                     "La cita se guardó correctamente, pero no se pudo registrar el cliente. " +
-                    (
-                        error.message ||
-                        ""
-                    );
+                    (error.message || "");
 
             } else {
                 message.textContent =
@@ -1363,14 +1165,10 @@ export function initializeBarberAppointmentForm(
             }
 
         } finally {
-            saving =
-                false;
+            saving = false;
 
-            saveButton.disabled =
-                false;
-
-            resetButton.disabled =
-                false;
+            saveButton.disabled = false;
+            resetButton.disabled = false;
         }
     }
 
@@ -1419,41 +1217,31 @@ export function initializeBarberAppointmentForm(
     ===================================================== */
 
     function cleanup() {
-        if (
-            disposed
-        ) {
+        if (disposed) {
             return;
         }
 
-        disposed =
-            true;
+        disposed = true;
 
         ++customerLookupVersion;
 
         controller.abort();
 
-        if (
-            unsubscribeAppointments
-        ) {
+        if (unsubscribeAppointments) {
             unsubscribeAppointments();
-
-            unsubscribeAppointments =
-                null;
+            unsubscribeAppointments = null;
         }
 
-        if (
-            activeCleanup ===
-            cleanup
-        ) {
-            activeCleanup =
-                null;
+        if (activeCleanup === cleanup) {
+            activeCleanup = null;
         }
     }
 
-    activeCleanup =
-        cleanup;
+    activeCleanup = cleanup;
 
     resetForm();
+
+    loadAssignedServices();
 
     initializeAvailability();
 
