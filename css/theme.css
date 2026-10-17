@@ -1592,3 +1592,310 @@ select option {
 .barber-modern-modal #barberActiveSwitch {
     accent-color: #d7a65c;
 }
+
+/* ==========================================================
+   EDUARDO'S BARBERSHOP
+   VENTANA DE CITAS DEL DÍA
+   TEMA PREMIUM NEGRO Y DORADO
+========================================================== */
+
+/* CONTENEDOR PRINCIPAL */
+
+dialog.eduardo-day-dialog {
+    width: min(520px, calc(100vw - 28px)) !important;
+    max-height: min(80vh, 760px) !important;
+    padding: 0 !important;
+
+    background: #090909 !important;
+    color: #f5f0e8 !important;
+
+    border: 1px solid #8c6838 !important;
+    border-radius: 15px !important;
+
+    box-shadow:
+        0 25px 80px rgba(0, 0, 0, 0.75),
+        0 0 25px rgba(215, 166, 92, 0.06) !important;
+
+    overflow: hidden !important;
+    box-sizing: border-box;
+
+    color-scheme: dark;
+}
+
+/* FONDO DETRÁS DE LA VENTANA */
+
+dialog.eduardo-day-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.82) !important;
+
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+/* CABECERA */
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+
+    padding: 20px !important;
+
+    background: linear-gradient(
+        135deg,
+        #292015,
+        #111111
+    ) !important;
+
+    border-bottom: 1px solid #5a4328 !important;
+}
+
+/* FECHA DEL DÍA */
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-title {
+    margin: 0;
+
+    color: #d7a65c !important;
+
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.3;
+    text-transform: capitalize;
+}
+
+/* CANTIDAD DE CITAS */
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-subtitle {
+    margin: 7px 0 0;
+
+    color: #a7a7a7 !important;
+
+    font-size: 13px;
+}
+
+/* BOTÓN CERRAR */
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-close {
+    flex: 0 0 auto;
+
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    width: 36px;
+    height: 36px;
+
+    background: #30271d !important;
+    color: #e8b873 !important;
+
+    border: 1px solid #5a4328 !important;
+    border-radius: 50% !important;
+
+    font-size: 23px;
+    line-height: 1;
+
+    cursor: pointer;
+
+    transition:
+        background 0.2s,
+        border-color 0.2s,
+        color 0.2s;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-close:hover {
+    background: #513c23 !important;
+    color: #ffffff !important;
+    border-color: #d7a65c !important;
+}
+
+/* LISTADO DE CITAS */
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-list {
+    max-height: calc(80vh - 110px);
+
+    padding: 16px !important;
+
+    background: #090909 !important;
+    color: #f5f0e8 !important;
+
+    overflow-y: auto;
+    overscroll-behavior: contain;
+}
+
+/* TARJETA DE CADA CITA */
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card {
+    display: grid;
+    gap: 8px;
+
+    margin-bottom: 12px;
+    padding: 15px !important;
+
+    background: #171717 !important;
+    color: #f5f0e8 !important;
+
+    border: 1px solid #353535 !important;
+    border-left: 4px solid #d7a65c !important;
+    border-radius: 10px !important;
+
+    box-shadow: none !important;
+
+    overflow-wrap: anywhere;
+
+    transition:
+        background 0.2s,
+        border-color 0.2s;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card:last-child {
+    margin-bottom: 0;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card:hover {
+    background: #202020 !important;
+    border-top-color: #5a4328 !important;
+    border-right-color: #5a4328 !important;
+    border-bottom-color: #5a4328 !important;
+}
+
+/* COLORES SEGÚN EL ESTADO */
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.pending {
+    border-left-color: #e8b75e !important;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.confirmed {
+    border-left-color: #80b5ff !important;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.completed {
+    border-left-color: #4fce83 !important;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.cancelled,
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.no-show {
+    border-left-color: #ff8585 !important;
+}
+
+/* HORA DE LA CITA */
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-time {
+    color: #d7a65c !important;
+
+    font-size: 15px;
+    font-weight: 800;
+}
+
+/* NOMBRE DEL CLIENTE */
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-name {
+    color: #ffffff !important;
+
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* NOMBRE DEL BARBERO */
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-meta {
+    color: #b8b8b8 !important;
+
+    font-size: 13px;
+}
+
+/* ESTADO DE LA CITA */
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-status {
+    color: #e8b873 !important;
+
+    font-size: 12px;
+    font-weight: 700;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.confirmed
+.eduardo-day-detail-status {
+    color: #80b5ff !important;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.completed
+.eduardo-day-detail-status {
+    color: #4fce83 !important;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.cancelled
+.eduardo-day-detail-status,
+dialog.eduardo-day-dialog
+.eduardo-day-detail-card.no-show
+.eduardo-day-detail-status {
+    color: #ff8585 !important;
+}
+
+/* BARRA DE DESPLAZAMIENTO */
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-list::-webkit-scrollbar {
+    width: 7px;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-list::-webkit-scrollbar-track {
+    background: #111111;
+}
+
+dialog.eduardo-day-dialog
+.eduardo-day-dialog-list::-webkit-scrollbar-thumb {
+    background: #75552b;
+    border-radius: 10px;
+}
+
+/* ADAPTACIÓN A CELULARES */
+
+@media (max-width: 520px) {
+    dialog.eduardo-day-dialog {
+        width: calc(100vw - 20px) !important;
+        max-height: 85vh !important;
+    }
+
+    dialog.eduardo-day-dialog
+    .eduardo-day-dialog-header {
+        padding: 16px !important;
+    }
+
+    dialog.eduardo-day-dialog
+    .eduardo-day-dialog-title {
+        font-size: 17px;
+    }
+
+    dialog.eduardo-day-dialog
+    .eduardo-day-dialog-list {
+        max-height: calc(85vh - 105px);
+        padding: 12px !important;
+    }
+
+    dialog.eduardo-day-dialog
+    .eduardo-day-detail-card {
+        padding: 12px !important;
+    }
+}
