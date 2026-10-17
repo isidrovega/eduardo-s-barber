@@ -1,0 +1,190 @@
+diff --git a/js/admin.js b/js/admin.js
+index 3fa3aa1..1df0260 100644
+--- a/js/admin.js
++++ b/js/admin.js
+@@ -58,6 +58,7 @@ const timeContainer = document.getElementById("appointmentTimes");
+ const customerDetection = document.getElementById("customerDetection");
+ 
+ const statsContainer = document.getElementById("dashboardStats");
++
+ const appointmentsContainer = document.getElementById(
+   "dashboardAppointments"
+ );
+@@ -296,7 +297,13 @@ async function detectCustomer() {
+ 
+   const lookupVersion = ++customerLookupVersion;
+ 
+-  if (phone.replace(/\D/g, "").length < 7) {
++  const phoneDigits = phone.replace(/\D/g, "");
++
++  if (
++    !phone ||
++    phoneDigits.length < 7 ||
++    phoneDigits.length > 15
++  ) {
+     customerDetection.replaceChildren();
+     return;
+   }
+@@ -519,7 +526,7 @@ async function openModal() {
+     modal.classList.remove("hidden");
+ 
+     setTimeout(() => {
+-      phoneInput.focus();
++      nameInput.focus();
+     }, 50);
+ 
+   } catch (error) {
+@@ -811,8 +818,22 @@ async function saveAppointment() {
+     return;
+   }
+ 
+-  if (phone.replace(/\D/g, "").length < 7) {
+-    showToast("Ingresa un teléfono válido.");
++  // El teléfono es opcional.
++  // Si se proporciona, debe tener entre 7 y 15 dígitos.
++
++  const phoneDigits = phone.replace(/\D/g, "");
++
++  if (
++    phone &&
++    (
++      phoneDigits.length < 7 ||
++      phoneDigits.length > 15
++    )
++  ) {
++    showToast(
++      "El teléfono debe tener entre 7 y 15 dígitos, o dejarse vacío."
++    );
++
+     phoneInput.focus();
+     return;
+   }
+@@ -886,14 +907,21 @@ async function saveAppointment() {
+ 
+     appointmentCreated = true;
+ 
+-    await getOrCreateCustomer(name, phone);
++    // Solo registrar o actualizar cliente si hay teléfono.
++
++    if (phone) {
++      await getOrCreateCustomer(name, phone);
++    }
+ 
+     closeModal();
+ 
++    // Actualizar estadísticas sin bloquear el mensaje de éxito.
+     await refreshCustomerCount();
+ 
+     showToast(
+-      `Cita de ${name} y cliente registrados en Firebase.`
++      phone
++        ? `Cita de ${name} y cliente registrados en Firebase.`
++        : `Cita de ${name} registrada correctamente.`
+     );
+ 
+   } catch (error) {
+diff --git a/js/appointments.js b/js/appointments.js
+index 077a71e..964f621 100644
+--- a/js/appointments.js
++++ b/js/appointments.js
+@@ -1013,11 +1013,17 @@ async function saveAppointment() {
+     return;
+   }
+ 
++  const phoneDigits = phone.replace(/\D/g, "");
++
+   if (
+-    phone.replace(/\D/g, "").length < 7
++    phone &&
++    (
++      phoneDigits.length < 7 ||
++      phoneDigits.length > 15
++    )
+   ) {
+     showToast(
+-      "Ingresa un teléfono válido."
++      "El teléfono debe tener entre 7 y 15 dígitos, o dejarse vacío."
+     );
+ 
+     phoneInput.focus();
+@@ -1089,17 +1095,21 @@ async function saveAppointment() {
+ 
+     appointmentCreated = true;
+ 
+-    await getOrCreateCustomer(
+-      name,
+-      phone
+-    );
++    if (phone) {
++      await getOrCreateCustomer(
++        name,
++        phone
++      );
++    }
+ 
+     closeModal();
+ 
+     renderAppointments();
+ 
+     showToast(
+-      `Cita de ${name} y cliente registrados en Firebase.`
++      phone
++        ? `Cita de ${name} y cliente registrados en Firebase.`
++        : `Cita de ${name} registrada correctamente.`
+     );
+ 
+   } catch (error) {
+diff --git a/js/barber-appointment-form.js b/js/barber-appointment-form.js
+index a107b62..6f29728 100644
+--- a/js/barber-appointment-form.js
++++ b/js/barber-appointment-form.js
+@@ -1042,9 +1042,9 @@ export function initializeBarberAppointmentForm(barber) {
+             return;
+         }
+ 
+-        if (!isValidPhone(phoneValue)) {
++        if (phoneValue && !isValidPhone(phoneValue)) {
+             message.textContent =
+-                "Ingresa un teléfono válido.";
++                "El teléfono ingresado no es válido.";
+ 
+             phone.focus();
+ 
+@@ -1129,19 +1129,29 @@ export function initializeBarberAppointmentForm(barber) {
+ 
+             appointmentSaved = true;
+ 
+-            message.textContent =
+-                "Cita guardada. Registrando cliente...";
++            if (phoneValue) {
++                message.textContent =
++                    "Cita guardada. Registrando cliente...";
+ 
+-            await saveBarberCustomer(
+-                nameValue,
+-                phoneValue
+-            );
++                await saveBarberCustomer(
++                    nameValue,
++                    phoneValue
++                );
++            }
+ 
+             resetForm();
+ 
+             message.textContent = editingId
+-                ? "Cita modificada y cliente registrado correctamente."
+-                : "Cita y cliente guardados correctamente.";
++                ? (
++                    phoneValue
++                        ? "Cita modificada y cliente registrado correctamente."
++                        : "Cita modificada correctamente."
++                )
++                : (
++                    phoneValue
++                        ? "Cita y cliente guardados correctamente."
++                        : "Cita guardada correctamente."
++                );
+ 
+         } catch (error) {
+             console.error(

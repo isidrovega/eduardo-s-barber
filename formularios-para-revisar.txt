@@ -1,0 +1,3717 @@
+
+import {
+  origins,
+  availableTimes,
+  getLocalDate
+} from "./data.js";
+
+import {
+  findCustomerByPhone,
+  getOrCreateCustomer,
+  getServices,
+  getBarbers
+} from "./firestore-storage.js";
+
+import { db } from "./firebase.js";
+import { protectPage } from "./auth.js";
+
+import {
+  createAppointment,
+  cancelAppointment,
+  changeAppointmentStatus
+} from "./appointment-booking.js";
+
+import {
+  initializeAppointmentCalendar,
+  filterAppointmentsByCalendar,
+  renderAppointmentCalendar
+} from "./appointments-calendar.js";
+
+import {
+  collection,
+  getDocs,
+  onSnapshot
+} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+/* =====================================================
+   ESTADO
+===================================================== */
+
+let currentFilter = "all";
+let selectedTime = "";
+
+let firebaseAppointments = [];
+let firebaseBarbers = [];
+let firebaseServices = [];
+
+let appointmentsLoaded = false;
+let savingAppointment = false;
+
+let unsubscribeAppointments = null;
+let customerLookupVersion = 0;
+let toastTimer = null;
+
+/* =====================================================
+   ELEMENTOS
+===================================================== */
+
+const appointmentsTable = document.getElementById(
+  "appointmentsTable"
+);
+
+const modal = document.getElementById("appointmentModal");
+const phoneInput = document.getElementById("appointmentPhone");
+const nameInput = document.getElementById("appointmentName");
+const serviceSelect = document.getElementById("appointmentService");
+const barberSelect = document.getElementById("appointmentBarber");
+const dateInput = document.getElementById("appointmentDate");
+const originSelect = document.getElementById("appointmentOrigin");
+const statusSelect = document.getElementById("appointmentStatus");
+const notesInput = document.getElementById("appointmentNotes");
+const timeContainer = document.getElementById("appointmentTimes");
+const customerDetection = document.getElementById("customerDetection");
+
+/* =====================================================
+   INICIALIZACIÓN
+===================================================== */
+
+async function initialize() {
+  appointmentsTable.innerHTML = `
+    <tr>
+      <td colspan="8">
+        <div class="empty">
+          Cargando citas desde Firebase...
+        </div>
+      </td>
+    </tr>
+  `;
+
+  try {
+    const user = await protectPage("admin");
+
+    if (!user) return;
+
+    await populateSelectors();
+
+    initializeAppointmentCalendar(
+      renderAppointments
+    );
+
+    configureEvents();
+    startAppointmentsListener();
+    handleIncomingCustomerBooking();
+
+  } catch (error) {
+    console.error("Error al iniciar citas:", error);
+
+    appointmentsTable.innerHTML = `
+      <tr>
+        <td colspan="8">
+          <div class="empty">
+            No se pudo cargar el módulo de citas.
+          </div>
+        </td>
+      </tr>
+    `;
+
+    showToast(
+      error.message ||
+      "No se pudo cargar el módulo de citas."
+    );
+  }
+}
+
+/* =====================================================
+   SELECTORES
+===================================================== */
+
+async function populateSelectors() {
+  const [services, barbers] = await Promise.all([
+    getServices(),
+    getBarbers()
+  ]);
+
+  firebaseServices = services;
+
+  firebaseBarbers = [...barbers].sort(
+    (a, b) =>
+      (a.name || "").localeCompare(
+        b.name || "",
+        "es"
+      )
+  );
+
+  const previousBarberId = barberSelect.value;
+
+  barberSelect.replaceChildren();
+
+  const activeBarbers = firebaseBarbers.filter(
+    barber => barber.status === "active"
+  );
+
+  for (const barber of activeBarbers) {
+    barberSelect.add(
+      new Option(
+        barber.name || barber.id,
+        barber.id
+      )
+    );
+  }
+
+  if (activeBarbers.length === 0) {
+    barberSelect.add(
+      new Option("Sin barberos activos", "")
+    );
+  }
+
+  if (
+    activeBarbers.some(
+      barber => barber.id === previousBarberId
+    )
+  ) {
+    barberSelect.value = previousBarberId;
+  } else {
+    barberSelect.value = activeBarbers[0]?.id || "";
+  }
+
+  updateServiceOptions();
+}
+
+function updateServiceOptions() {
+  const barber = firebaseBarbers.find(
+    item => item.id === barberSelect.value
+  );
+
+  const previousServiceId = serviceSelect.value;
+
+  const assignedServiceIds = Array.isArray(barber?.serviceIds)
+    ? barber.serviceIds
+    : [];
+
+  const allowedServices = firebaseServices.filter(
+    service =>
+      service.status === "active" &&
+      assignedServiceIds.includes(service.id)
+  );
+
+  const options = allowedServices.map(
+    service =>
+      new Option(
+        `${service.name} · $${service.price} · ${service.duration} min`,
+        service.id
+      )
+  );
+
+  if (options.length === 0) {
+    options.push(
+      new Option("Sin servicios disponibles", "")
+    );
+  }
+
+  serviceSelect.replaceChildren(...options);
+
+  if (
+    allowedServices.some(
+      service => service.id === previousServiceId
+    )
+  ) {
+    serviceSelect.value = previousServiceId;
+  } else {
+    serviceSelect.value = allowedServices[0]?.id || "";
+  }
+
+  serviceSelect.disabled = allowedServices.length === 0;
+
+  return allowedServices;
+}
+
+
+/* =====================================================
+   SINCRONIZACIÓN DEL SELECTOR DE SERVICIOS
+===================================================== */
+
+let syncingServiceOptions = false;
+
+const serviceOptionsObserver = new MutationObserver(() => {
+  if (
+    syncingServiceOptions ||
+    modal.classList.contains("hidden") ||
+    serviceSelect.disabled
+  ) {
+    return;
+  }
+
+  const barber = firebaseBarbers.find(
+    item => item.id === barberSelect.value
+  );
+
+  const assignedIds = Array.isArray(barber?.serviceIds)
+    ? barber.serviceIds
+    : [];
+
+  const expectedServices = firebaseServices.filter(
+    service =>
+      service.status === "active" &&
+      assignedIds.includes(service.id)
+  );
+
+  const expectedIds = expectedServices
+    .map(service => service.id)
+    .sort();
+
+  const actualIds = [...serviceSelect.options]
+    .map(option => option.value)
+    .filter(Boolean)
+    .sort();
+
+  const isCorrect =
+    expectedIds.length === actualIds.length &&
+    expectedIds.every(
+      (id, index) => id === actualIds[index]
+    );
+
+  if (isCorrect) {
+    return;
+  }
+
+  syncingServiceOptions = true;
+
+  try {
+    updateServiceOptions();
+    renderTimes();
+  } finally {
+    syncingServiceOptions = false;
+  }
+});
+
+serviceOptionsObserver.observe(serviceSelect, {
+  childList: true,
+  subtree: true
+});
+
+/* =====================================================
+   FIRESTORE EN TIEMPO REAL
+===================================================== */
+
+function startAppointmentsListener() {
+  if (unsubscribeAppointments) {
+    unsubscribeAppointments();
+  }
+
+  unsubscribeAppointments = onSnapshot(
+    collection(db, "appointments"),
+
+    snapshot => {
+      firebaseAppointments = snapshot.docs.map(
+        document => ({
+          ...document.data(),
+          id: document.id
+        })
+      );
+
+      appointmentsLoaded = true;
+
+      renderAppointments();
+      renderTimes();
+    },
+
+    error => {
+      console.error(
+        "Error al consultar citas:",
+        error
+      );
+
+      appointmentsLoaded = false;
+
+      appointmentsTable.innerHTML = `
+        <tr>
+          <td colspan="8">
+            <div class="empty">
+              No se pudieron cargar las citas de Firebase.
+            </div>
+          </td>
+        </tr>
+      `;
+
+      showToast(
+        "Error al consultar citas."
+      );
+    }
+  );
+}
+
+/* =====================================================
+   EVENTOS
+===================================================== */
+
+function configureEvents() {
+  document.getElementById(
+    "newAppointmentButton"
+  ).addEventListener(
+    "click",
+    openModal
+  );
+
+  document.getElementById(
+    "closeModalButton"
+  ).addEventListener(
+    "click",
+    closeModal
+  );
+
+  document.getElementById(
+    "cancelModalButton"
+  ).addEventListener(
+    "click",
+    closeModal
+  );
+
+  document.getElementById(
+    "saveAppointmentButton"
+  ).addEventListener(
+    "click",
+    saveAppointment
+  );
+
+  phoneInput.addEventListener(
+    "input",
+    detectCustomer
+  );
+
+  barberSelect.addEventListener(
+    "change",
+    () => {
+      updateServiceOptions();
+      renderTimes();
+    }
+  );
+
+  serviceSelect.addEventListener(
+    "change",
+    renderTimes
+  );
+
+  dateInput.addEventListener(
+    "change",
+    renderTimes
+  );
+
+  modal.addEventListener(
+    "click",
+    event => {
+      if (event.target === modal) {
+        closeModal();
+      }
+    }
+  );
+
+  document.querySelectorAll(
+    ".filter"
+  ).forEach(button => {
+    button.addEventListener(
+      "click",
+      () => {
+        document.querySelectorAll(
+          ".filter"
+        ).forEach(item => {
+          item.classList.remove(
+            "active"
+          );
+        });
+
+        button.classList.add(
+          "active"
+        );
+
+        currentFilter =
+          button.dataset.filter;
+
+        renderAppointments();
+      }
+    );
+  });
+
+  appointmentsTable.addEventListener(
+    "click",
+    handleTableAction
+  );
+
+  document.addEventListener(
+    "keydown",
+    event => {
+      if (
+        event.key === "Escape" &&
+        !modal.classList.contains(
+          "hidden"
+        )
+      ) {
+        closeModal();
+      }
+    }
+  );
+}
+
+/* =====================================================
+   RESERVA DESDE CLIENTES
+===================================================== */
+
+function handleIncomingCustomerBooking() {
+  const params = new URLSearchParams(
+    window.location.search
+  );
+
+  if (params.get("new") !== "1") {
+    return;
+  }
+
+  const storedCustomer =
+    sessionStorage.getItem(
+      "barbershop_booking_customer"
+    );
+
+  openModal();
+
+  if (!storedCustomer) {
+    cleanBookingURL();
+    return;
+  }
+
+  try {
+    const customer = JSON.parse(
+      storedCustomer
+    );
+
+    phoneInput.value =
+      customer.phone || "";
+
+    nameInput.value =
+      customer.name || "";
+
+    detectCustomer();
+
+    sessionStorage.removeItem(
+      "barbershop_booking_customer"
+    );
+
+    cleanBookingURL();
+
+    showToast(
+      "Cliente seleccionado para nueva cita."
+    );
+
+  } catch (error) {
+    console.error(
+      "Error al cargar cliente:",
+      error
+    );
+
+    sessionStorage.removeItem(
+      "barbershop_booking_customer"
+    );
+
+    cleanBookingURL();
+  }
+}
+
+function cleanBookingURL() {
+  window.history.replaceState(
+    {},
+    document.title,
+    window.location.pathname
+  );
+}
+
+/* =====================================================
+   MODAL
+===================================================== */
+
+let openingAppointmentModal = false;
+
+async function openModal() {
+  if (openingAppointmentModal) {
+    return;
+  }
+
+  openingAppointmentModal = true;
+
+  // Mostrar el formulario inmediatamente.
+  modal.classList.remove("hidden");
+
+  try {
+    await resetForm();
+
+    setTimeout(() => {
+      phoneInput.focus();
+    }, 50);
+
+  } catch (error) {
+    console.error(
+      "Error al preparar el formulario de citas:",
+      error
+    );
+
+    showToast(
+      "No se pudieron cargar los datos de la cita. Intenta nuevamente."
+    );
+
+  } finally {
+    openingAppointmentModal = false;
+  }
+}
+
+function closeModal() {
+  ++customerLookupVersion;
+
+  modal.classList.add(
+    "hidden"
+  );
+}
+
+async function resetForm() {
+  ++customerLookupVersion;
+
+  phoneInput.value = "";
+  nameInput.value = "";
+  notesInput.value = "";
+
+  customerDetection.replaceChildren();
+
+  originSelect.value = "whatsapp";
+
+  statusSelect.value = "pending";
+  statusSelect.disabled = true;
+
+  dateInput.min = getLocalDate();
+  dateInput.value = getLocalDate();
+
+  selectedTime = "";
+
+  serviceSelect.replaceChildren(
+    new Option("Cargando servicios...", "")
+  );
+
+  serviceSelect.disabled = true;
+  barberSelect.disabled = true;
+
+  try {
+    const [services, barbers] = await Promise.all([
+      getServices(),
+      getBarbers()
+    ]);
+
+    firebaseServices = services;
+
+    firebaseBarbers = [...barbers].sort(
+      (a, b) =>
+        (a.name || "").localeCompare(
+          b.name || "",
+          "es"
+        )
+    );
+
+    const activeBarbers = firebaseBarbers.filter(
+      barber => barber.status === "active"
+    );
+
+    barberSelect.replaceChildren();
+
+    for (const barber of activeBarbers) {
+      barberSelect.add(
+        new Option(
+          barber.name || barber.id,
+          barber.id
+        )
+      );
+    }
+
+    if (activeBarbers.length === 0) {
+      barberSelect.add(
+        new Option("Sin barberos activos", "")
+      );
+    }
+
+    barberSelect.value = activeBarbers[0]?.id || "";
+
+    updateServiceOptions();
+
+  } catch (error) {
+    console.error(
+      "Error al actualizar barberos y servicios:",
+      error
+    );
+
+    serviceSelect.replaceChildren(
+      new Option("Error al cargar servicios", "")
+    );
+
+    serviceSelect.disabled = true;
+
+    showToast(
+      "No se pudieron actualizar los servicios."
+    );
+
+  } finally {
+    barberSelect.disabled = false;
+  }
+
+  renderTimes();
+}
+
+/* =====================================================
+   DETECCIÓN DE CLIENTES
+===================================================== */
+
+async function detectCustomer() {
+  const phone = phoneInput.value.trim();
+
+  const lookupVersion =
+    ++customerLookupVersion;
+
+  if (
+    phone.replace(/\D/g, "").length < 7
+  ) {
+    customerDetection.replaceChildren();
+    return;
+  }
+
+  customerDetection.textContent =
+    "Buscando cliente...";
+
+  try {
+    const customer =
+      await findCustomerByPhone(
+        phone
+      );
+
+    if (
+      lookupVersion !==
+        customerLookupVersion ||
+      phoneInput.value.trim() !== phone
+    ) {
+      return;
+    }
+
+    if (customer) {
+      nameInput.value =
+        customer.name || "";
+
+      customerDetection.innerHTML = `
+        <div class="customer-found">
+          ✓ Cliente encontrado:
+          <strong>
+            ${escapeHTML(customer.name)}
+          </strong>
+          · ${Number(customer.visits) || 0} visitas
+        </div>
+      `;
+
+    } else {
+      customerDetection.innerHTML = `
+        <div class="customer-new">
+          Cliente nuevo. Se registrará en Firebase.
+        </div>
+      `;
+    }
+
+  } catch (error) {
+    console.error(
+      "Error al buscar cliente:",
+      error
+    );
+
+    if (
+      lookupVersion ===
+      customerLookupVersion
+    ) {
+      customerDetection.textContent =
+        "No se pudo consultar el cliente.";
+    }
+  }
+}
+
+/* =====================================================
+   DISPONIBILIDAD
+===================================================== */
+
+function toMinutes(value) {
+  if (
+    !/^\d{2}:\d{2}$/.test(
+      value || ""
+    )
+  ) {
+    return NaN;
+  }
+
+  const [hours, minutes] =
+    value.split(":").map(Number);
+
+  if (
+    hours < 0 ||
+    hours > 23 ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return NaN;
+  }
+
+  return hours * 60 + minutes;
+}
+
+function getAvailableTimes(
+  date,
+  barberId
+) {
+  if (
+    !appointmentsLoaded ||
+    !date ||
+    !barberId ||
+    !serviceSelect.value
+  ) {
+    return [];
+  }
+
+  const barber = firebaseBarbers.find(
+    item => item.id === barberId
+  );
+
+  const service = firebaseServices.find(
+    item => item.id ===
+      serviceSelect.value
+  );
+
+  if (
+    !barber ||
+    barber.status !== "active" ||
+    !service ||
+    !barber.serviceIds?.includes(
+      service.id
+    )
+  ) {
+    return [];
+  }
+
+  const weekday = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday"
+  ][
+    new Date(
+      `${date}T12:00:00Z`
+    ).getUTCDay()
+  ];
+
+  const schedule =
+    barber.schedule?.[weekday];
+
+  if (!schedule?.enabled) {
+    return [];
+  }
+
+  const opening = toMinutes(
+    schedule.start
+  );
+
+  const closing = toMinutes(
+    schedule.end
+  );
+
+  if (
+    !Number.isFinite(opening) ||
+    !Number.isFinite(closing)
+  ) {
+    return [];
+  }
+
+  const occupied =
+    firebaseAppointments.filter(
+      appointment =>
+        appointment.date === date &&
+        appointment.barberId === barberId &&
+        appointment.status !==
+          "cancelled" &&
+        appointment.status !==
+          "no-show"
+    );
+
+  const businessTime =
+    new Intl.DateTimeFormat(
+      "en-GB",
+      {
+        timeZone:
+          "America/Mazatlan",
+        hour: "2-digit",
+        minute: "2-digit",
+        hourCycle: "h23"
+      }
+    ).format(new Date());
+
+  const currentMinutes =
+    toMinutes(businessTime);
+
+  return availableTimes.filter(
+    time => {
+      const start =
+        toMinutes(time);
+
+      const end =
+        start + service.duration;
+
+      if (
+        start < opening ||
+        end > closing
+      ) {
+        return false;
+      }
+
+      if (
+        date === getLocalDate() &&
+        start <= currentMinutes
+      ) {
+        return false;
+      }
+
+      return !occupied.some(
+        appointment => {
+          const existingService =
+            firebaseServices.find(
+              item =>
+                item.id ===
+                appointment.serviceId
+            );
+
+          const existingStart =
+            toMinutes(
+              appointment.time
+            );
+
+          if (
+            !Number.isFinite(
+              existingStart
+            )
+          ) {
+            return true;
+          }
+
+          const existingEnd =
+            existingStart +
+            (
+              Number(
+                appointment.duration
+              ) ||
+              existingService?.duration ||
+              30
+            );
+
+          return (
+            start < existingEnd &&
+            end > existingStart
+          );
+        }
+      );
+    }
+  );
+}
+
+function renderTimes() {
+  const times = getAvailableTimes(
+    dateInput.value,
+    barberSelect.value
+  );
+
+  if (
+    !times.includes(
+      selectedTime
+    )
+  ) {
+    selectedTime =
+      times[0] || "";
+  }
+
+  if (!times.length) {
+    timeContainer.innerHTML = `
+      <div
+        class="empty"
+        style="grid-column: 1 / -1;"
+      >
+        No hay horarios disponibles.
+      </div>
+    `;
+
+    return;
+  }
+
+  timeContainer.innerHTML =
+    times.map(
+      time => `
+        <button
+          type="button"
+          class="time-button ${
+            selectedTime === time
+              ? "selected"
+              : ""
+          }"
+          data-time="${time}"
+        >
+          ${formatTime(time)}
+        </button>
+      `
+    ).join("");
+
+  timeContainer.querySelectorAll(
+    ".time-button"
+  ).forEach(
+    button => {
+      button.addEventListener(
+        "click",
+        () => {
+          selectedTime =
+            button.dataset.time;
+
+          renderTimes();
+        }
+      );
+    }
+  );
+}
+
+/* =====================================================
+   GUARDAR CITA Y CLIENTE
+===================================================== */
+
+async function saveAppointment() {
+  if (savingAppointment) {
+    return;
+  }
+
+  if (!appointmentsLoaded) {
+    showToast(
+      "Espera a que carguen las citas."
+    );
+
+    return;
+  }
+
+  const name =
+    nameInput.value.trim();
+
+  const phone =
+    phoneInput.value.trim();
+
+  const date =
+    dateInput.value;
+
+  if (!name) {
+    showToast(
+      "Ingresa el nombre del cliente."
+    );
+
+    nameInput.focus();
+    return;
+  }
+
+  if (
+    phone.replace(/\D/g, "").length < 7
+  ) {
+    showToast(
+      "Ingresa un teléfono válido."
+    );
+
+    phoneInput.focus();
+    return;
+  }
+
+  if (
+    !date ||
+    !selectedTime ||
+    !barberSelect.value ||
+    !serviceSelect.value
+  ) {
+    showToast(
+      "Selecciona servicio, barbero, fecha y hora."
+    );
+
+    return;
+  }
+
+  /*
+     Comprobar otra vez que el horario
+     seleccionado siga disponible.
+  */
+
+  const currentAvailableTimes =
+    getAvailableTimes(
+      date,
+      barberSelect.value
+    );
+
+  if (
+    !currentAvailableTimes.includes(
+      selectedTime
+    )
+  ) {
+    showToast(
+      "El horario seleccionado ya no está disponible."
+    );
+
+    renderTimes();
+    return;
+  }
+
+  const appointment = {
+    clientName: name,
+    phone,
+    date,
+    time: selectedTime,
+    barberId: barberSelect.value,
+    serviceId: serviceSelect.value,
+    origin: originSelect.value,
+    notes: notesInput.value.trim()
+  };
+
+  const button =
+    document.getElementById(
+      "saveAppointmentButton"
+    );
+
+  savingAppointment = true;
+  button.disabled = true;
+
+  let appointmentCreated = false;
+
+  try {
+    await createAppointment(
+      appointment
+    );
+
+    appointmentCreated = true;
+
+    await getOrCreateCustomer(
+      name,
+      phone
+    );
+
+    closeModal();
+
+    renderAppointments();
+
+    showToast(
+      `Cita de ${name} y cliente registrados en Firebase.`
+    );
+
+  } catch (error) {
+    console.error(
+      "Error al guardar cita:",
+      error
+    );
+
+    if (appointmentCreated) {
+      closeModal();
+
+      showToast(
+        "La cita se guardó, pero falló el registro del cliente."
+      );
+
+    } else {
+      showToast(
+        error.message ||
+        "No se pudo registrar la cita."
+      );
+    }
+
+  } finally {
+    savingAppointment = false;
+    button.disabled = false;
+  }
+}
+
+/* =====================================================
+   FILTROS DE CITAS
+===================================================== */
+
+function getFilteredAppointments() {
+  /*
+     Primero aplicar los filtros de
+     barbero y rango de fechas.
+  */
+
+  let appointments =
+    filterAppointmentsByCalendar(
+      firebaseAppointments
+    );
+
+  /*
+     Después aplicar el filtro
+     de estado seleccionado.
+  */
+
+  if (currentFilter === "today") {
+    appointments =
+      appointments.filter(
+        appointment =>
+          appointment.date ===
+          getLocalDate()
+      );
+
+  } else if (
+    currentFilter !== "all"
+  ) {
+    appointments =
+      appointments.filter(
+        appointment =>
+          appointment.status ===
+          currentFilter
+      );
+  }
+
+  appointments.sort(
+    (a, b) =>
+      `${a.date || ""} ${a.time || ""}`
+        .localeCompare(
+          `${b.date || ""} ${b.time || ""}`
+        )
+  );
+
+  return appointments;
+}
+
+/* =====================================================
+   TABLA Y CALENDARIO
+===================================================== */
+
+function renderAppointments() {
+  if (!appointmentsLoaded) {
+    appointmentsTable.innerHTML = `
+      <tr>
+        <td colspan="8">
+          <div class="empty">
+            Cargando citas desde Firebase...
+          </div>
+        </td>
+      </tr>
+    `;
+
+    return;
+  }
+
+  const appointments =
+    getFilteredAppointments();
+
+  /*
+     El calendario y la tabla reciben
+     exactamente las mismas citas filtradas.
+  */
+
+  renderAppointmentCalendar(
+    appointments,
+    firebaseBarbers
+  );
+
+  if (!appointments.length) {
+    appointmentsTable.innerHTML = `
+      <tr>
+        <td colspan="8">
+          <div class="empty">
+            No hay citas para los filtros seleccionados.
+          </div>
+        </td>
+      </tr>
+    `;
+
+    return;
+  }
+
+  appointmentsTable.innerHTML =
+    appointments.map(
+      appointment => {
+        const service =
+          getService(
+            appointment.serviceId
+          );
+
+        const barber =
+          getBarber(
+            appointment.barberId
+          );
+
+        return `
+          <tr>
+
+            <td>
+              ${formatDate(
+                appointment.date
+              )}
+            </td>
+
+            <td>
+              <strong>
+                ${formatTime(
+                  appointment.time
+                )}
+              </strong>
+            </td>
+
+            <td>
+              <strong>
+                ${escapeHTML(
+                  appointment.clientName
+                )}
+              </strong>
+
+              <span class="client-phone">
+                ${escapeHTML(
+                  appointment.phone
+                )}
+              </span>
+
+              ${
+                appointment.notes
+                  ? `
+                    <span class="appointment-note">
+                      Nota:
+                      ${escapeHTML(
+                        appointment.notes
+                      )}
+                    </span>
+                  `
+                  : ""
+              }
+            </td>
+
+            <td>
+              ${escapeHTML(
+                service.name
+              )}
+
+              <span class="client-phone">
+                ${service.duration} min
+                · $${service.price}
+              </span>
+            </td>
+
+            <td>
+              ${escapeHTML(
+                barber.name
+              )}
+            </td>
+
+            <td>
+              <span class="origin">
+                ${escapeHTML(
+                  origins[
+                    appointment.origin
+                  ] || "Otro"
+                )}
+              </span>
+            </td>
+
+            <td>
+              ${renderStatus(
+                appointment.status
+              )}
+            </td>
+
+            <td>
+              <div class="table-actions">
+                ${renderActions(
+                  appointment
+                )}
+              </div>
+            </td>
+
+          </tr>
+        `;
+      }
+    ).join("");
+}
+
+/* =====================================================
+   ACCIONES DE CITAS
+===================================================== */
+
+function renderActions(appointment) {
+  const id = escapeHTML(
+    appointment.id
+  );
+
+  switch (appointment.status) {
+    case "pending":
+      return `
+        <button
+          type="button"
+          class="mini-button"
+          data-action="confirmed"
+          data-id="${id}"
+        >
+          Confirmar
+        </button>
+
+        <button
+          type="button"
+          class="mini-button danger"
+          data-action="cancelled"
+          data-id="${id}"
+        >
+          Cancelar
+        </button>
+      `;
+
+    case "confirmed":
+      return `
+        <button
+          type="button"
+          class="mini-button success"
+          data-action="completed"
+          data-id="${id}"
+        >
+          Completar
+        </button>
+
+        <button
+          type="button"
+          class="mini-button"
+          data-action="no-show"
+          data-id="${id}"
+        >
+          No asistió
+        </button>
+
+        <button
+          type="button"
+          class="mini-button danger"
+          data-action="cancelled"
+          data-id="${id}"
+        >
+          Cancelar
+        </button>
+      `;
+
+    case "cancelled":
+    case "no-show":
+      return `
+        <span class="client-phone">
+          Sin reserva activa
+        </span>
+      `;
+
+    case "completed":
+      return `
+        <span class="client-phone">
+          Finalizada
+        </span>
+      `;
+
+    default:
+      return "";
+  }
+}
+
+function handleTableAction(event) {
+  const button = event.target.closest(
+    "[data-action]"
+  );
+
+  if (!button) {
+    return;
+  }
+
+  const appointmentId =
+    button.dataset.id;
+
+  const newStatus =
+    button.dataset.action;
+
+  button.disabled = true;
+
+  updateStatus(
+    appointmentId,
+    newStatus
+  ).finally(
+    () => {
+      if (button.isConnected) {
+        button.disabled = false;
+      }
+    }
+  );
+}
+
+async function updateStatus(
+  appointmentId,
+  newStatus
+) {
+  const appointment =
+    firebaseAppointments.find(
+      item => item.id ===
+        appointmentId
+    );
+
+  if (!appointment) {
+    showToast(
+      "No se encontró la cita."
+    );
+
+    return;
+  }
+
+  if (
+    appointment.status ===
+    newStatus
+  ) {
+    return;
+  }
+
+  const messages = {
+    confirmed: "Cita confirmada.",
+    cancelled: "Cita cancelada.",
+    "no-show":
+      "Cita marcada como no asistió.",
+    completed: "Cita completada."
+  };
+
+  try {
+    if (
+      newStatus === "cancelled"
+    ) {
+      const confirmed =
+        window.confirm(
+          `¿Cancelar la cita de ${appointment.clientName}?`
+        );
+
+      if (!confirmed) {
+        return;
+      }
+
+      await cancelAppointment(
+        appointmentId
+      );
+
+    } else {
+      await changeAppointmentStatus(
+        appointmentId,
+        newStatus
+      );
+    }
+
+    showToast(
+      messages[newStatus] ||
+      "Estado actualizado."
+    );
+
+  } catch (error) {
+    console.error(
+      "Error al cambiar estado:",
+      error
+    );
+
+    showToast(
+      error.message ||
+      "No se pudo actualizar la cita."
+    );
+  }
+}
+
+/* =====================================================
+   UTILIDADES
+===================================================== */
+
+function getService(id) {
+  return firebaseServices.find(
+    service => service.id === id
+  ) || {
+    id,
+    name: "Servicio no disponible",
+    price: 0,
+    duration: 30
+  };
+}
+
+function getBarber(id) {
+  return firebaseBarbers.find(
+    barber => barber.id === id
+  ) || {
+    id,
+    name: "Barbero no disponible"
+  };
+}
+
+function renderStatus(status) {
+  const labels = {
+    pending: "Pendiente",
+    confirmed: "Confirmada",
+    completed: "Completada",
+    cancelled: "Cancelada",
+    "no-show": "No asistió"
+  };
+
+  const safeStatus =
+    Object.hasOwn(
+      labels,
+      status
+    )
+      ? status
+      : "pending";
+
+  return `
+    <span class="status ${safeStatus}">
+      ${labels[safeStatus]}
+    </span>
+  `;
+}
+
+function formatTime(time) {
+  if (!time) {
+    return "";
+  }
+
+  const [hours, minutes] =
+    time.split(":").map(Number);
+
+  if (
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes)
+  ) {
+    return "";
+  }
+
+  const period =
+    hours >= 12
+      ? "PM"
+      : "AM";
+
+  return (
+    `${hours % 12 || 12}:` +
+    `${String(minutes).padStart(2, "0")} ${period}`
+  );
+}
+
+function formatDate(dateString) {
+  if (!dateString) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(
+    "es-MX",
+    {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      timeZone: "UTC"
+    }
+  ).format(
+    new Date(
+      `${dateString}T12:00:00Z`
+    )
+  );
+}
+
+function escapeHTML(value) {
+  const element =
+    document.createElement(
+      "div"
+    );
+
+  element.textContent =
+    String(value ?? "");
+
+  return element.innerHTML;
+}
+
+function showToast(message) {
+  const toast =
+    document.getElementById(
+      "toast"
+    );
+
+  if (!toast) {
+    console.warn(message);
+    return;
+  }
+
+  toast.textContent =
+    message;
+
+  toast.classList.add(
+    "show"
+  );
+
+  clearTimeout(
+    toastTimer
+  );
+
+  toastTimer =
+    setTimeout(
+      () => {
+        toast.classList.remove(
+          "show"
+        );
+      },
+      2800
+    );
+}
+
+/* =====================================================
+   INICIO
+===================================================== */
+
+initialize();
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1.0">
+
+    <title>Mi panel | EDUARDO'S BARBERSHOP</title>
+
+    <style>
+        :root {
+            color-scheme: dark;
+            font-family: Arial, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            background: #0b0b0b;
+            color: #f5f5f5;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 20px;
+            padding: 22px 6%;
+            border-bottom: 1px solid #292929;
+            background: #141414;
+        }
+
+        header h1 {
+            margin: 0;
+            font-size: 20px;
+            color: #d4ac70;
+        }
+
+        main {
+            max-width: 1050px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        h2 {
+            margin-top: 0;
+        }
+
+        .subtitle {
+            color: #aaa;
+            line-height: 1.6;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(
+                auto-fit,
+                minmax(280px, 1fr)
+            );
+            gap: 20px;
+            margin-top: 30px;
+        }
+
+        .card {
+            padding: 25px;
+            border: 1px solid #333;
+            border-radius: 15px;
+            background: #171717;
+        }
+
+        .card h3 {
+            margin-top: 0;
+            color: #d4ac70;
+        }
+
+        .field {
+            margin: 18px 0;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        input {
+            width: 100%;
+            padding: 13px;
+            border: 1px solid #444;
+            border-radius: 8px;
+            background: #101010;
+            color: white;
+            font: inherit;
+        }
+
+        button {
+            padding: 12px 18px;
+            border: 0;
+            border-radius: 8px;
+            background: #c99f5d;
+            color: #111;
+            font-weight: 700;
+            cursor: pointer;
+        }
+
+        button:disabled {
+            opacity: .6;
+            cursor: wait;
+        }
+
+        .logout {
+            background: transparent;
+            border: 1px solid #c99f5d;
+            color: #d4ac70;
+        }
+
+        .message {
+            min-height: 24px;
+            margin-top: 15px;
+            color: #ff9c9c;
+            line-height: 1.5;
+        }
+
+        .message.success {
+            color: #8ce5aa;
+        }
+
+        .schedule-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 15px;
+            padding: 12px 0;
+            border-bottom: 1px solid #303030;
+        }
+
+        .schedule-row:last-child {
+            border-bottom: 0;
+        }
+
+        [hidden] {
+            display: none !important;
+        }
+
+        @media (max-width: 600px) {
+            header {
+                align-items: flex-start;
+                flex-direction: column;
+            }
+        }
+
+
+.barber-calendar {
+    margin-top: 20px;
+    color: #f5f0e6;
+}
+
+.calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+}
+
+.calendar-title {
+    margin: 0;
+    font-size: 20px;
+    text-transform: capitalize;
+}
+
+.calendar-nav {
+    width: 40px;
+    height: 40px;
+    border: 1px solid #b99652;
+    border-radius: 10px;
+    background: #171717;
+    color: #d8b66d;
+    font-size: 26px;
+    cursor: pointer;
+}
+
+.calendar-weekdays,
+.calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.calendar-weekdays {
+    margin-bottom: 8px;
+}
+
+.calendar-weekday {
+    text-align: center;
+    color: #b99652;
+    font-size: 12px;
+    font-weight: 700;
+}
+
+.calendar-blank {
+    min-height: 48px;
+}
+
+.calendar-date {
+    position: relative;
+    min-height: 58px;
+    padding: 8px 4px;
+    border: 1px solid #343434;
+    border-radius: 10px;
+    background: #1b1b1b;
+    color: #f5f0e6;
+    font-size: 15px;
+    cursor: pointer;
+}
+
+.calendar-date:hover {
+    border-color: #b99652;
+}
+
+.calendar-date.is-today {
+    border-color: #b99652;
+}
+
+.calendar-date.is-selected {
+    background: #b99652;
+    color: #111;
+    font-weight: 700;
+}
+
+.calendar-count {
+    display: block;
+    width: fit-content;
+    min-width: 18px;
+    margin: 4px auto 0;
+    padding: 1px 4px;
+    border-radius: 8px;
+    background: #5e4824;
+    color: white;
+    font-size: 10px;
+}
+
+.calendar-day-title {
+    margin: 26px 0 14px;
+    color: #d8b66d;
+    font-size: 18px;
+}
+
+.calendar-appointments {
+    display: grid;
+    gap: 10px;
+}
+
+.calendar-appointment {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid #363636;
+    border-radius: 10px;
+    background: #191919;
+}
+
+.calendar-appointment-time {
+    color: #d8b66d;
+}
+
+.calendar-appointment-name {
+    font-weight: 600;
+}
+
+.calendar-appointment-details {
+    width: 100%;
+    color: #aaa;
+}
+
+.calendar-empty,
+.calendar-message {
+    color: #aaa;
+    font-size: 14px;
+}
+
+@media (max-width: 480px) {
+    .calendar-date {
+        min-height: 46px;
+        font-size: 13px;
+    }
+
+    .calendar-weekdays,
+    .calendar-grid {
+        gap: 3px;
+    }
+}
+
+.calendar-appointment-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+    margin-top: 8px;
+}
+
+.calendar-action-button {
+    padding: 9px 14px;
+    border: 1px solid #b99652;
+    border-radius: 8px;
+    background: #262016;
+    color: #e3c383;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.calendar-action-button:hover {
+    background: #3b2d17;
+}
+
+.calendar-action-danger {
+    border-color: #a65353;
+    background: #321d1d;
+    color: #f1a7a7;
+}
+
+.calendar-action-danger:hover {
+    background: #4a2525;
+}
+
+
+
+.appointment-form-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+#appointmentEditorSection label {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: #d8b66d;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+#appointmentEditorSection input,
+#appointmentEditorSection select,
+#appointmentEditorSection textarea {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #444;
+    border-radius: 9px;
+    background: #181818;
+    color: #fff;
+    font: inherit;
+    box-sizing: border-box;
+}
+
+#appointmentEditorSection textarea {
+    resize: vertical;
+}
+
+.appointment-form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 20px;
+}
+
+.appointment-form-actions button {
+    padding: 12px 18px;
+    border: 1px solid #b99652;
+    border-radius: 9px;
+    background: #b99652;
+    color: #111;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+#resetBarberAppointmentButton {
+    background: transparent;
+    color: #d8b66d;
+}
+
+.appointment-form-actions button:disabled {
+    opacity: 0.6;
+    cursor: wait;
+}
+
+#barberAppointmentMessage {
+    min-height: 22px;
+    margin-top: 14px;
+    color: #d8b66d;
+}
+
+@media (max-width: 600px) {
+    .appointment-form-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
+    </style>
+</head>
+
+<body>
+    <header>
+        <h1>✂ EDUARDO'S BARBERSHOP</h1>
+
+        <button
+            id="logoutButton"
+            class="logout"
+            type="button"
+            hidden
+        >
+            Cerrar sesión
+        </button>
+    </header>
+
+    <main>
+        <section id="loadingSection">
+            <h2>Verificando acceso...</h2>
+            <p class="subtitle">
+                Estamos comprobando tu cuenta.
+            </p>
+        </section>
+
+        <section id="panelSection" hidden>
+            <h2 id="welcomeTitle">
+                Bienvenido
+            </h2>
+
+            <p class="subtitle">
+                Este es tu panel personal de barbero.
+            </p>
+
+            <div class="grid">
+                <article class="card">
+                    <h3>Mi perfil</h3>
+                    <p>
+                        <strong>Nombre:</strong>
+                        <span id="profileName">—</span>
+                    </p>
+                    <p>
+                        <strong>Correo:</strong>
+                        <span id="profileEmail">—</span>
+                    </p>
+                    <p>
+                        <strong>Estado:</strong>
+                        <span id="profileStatus">—</span>
+                    </p>
+                </article>
+
+                <article class="card">
+                    <h3>Mi horario</h3>
+                    <div id="scheduleList"></div>
+                </article>
+
+                <section class="card" aria-labelledby="calendarHeading">
+    <h2 id="calendarHeading">Mi calendario de citas</h2>
+    <div id="barberCalendar"></div>
+</section>
+
+<section class="card" id="appointmentEditorSection">
+    <h2 id="appointmentEditorTitle">Agendar cita</h2>
+
+    <form id="barberAppointmentForm">
+        <input
+            type="hidden"
+            id="barberAppointmentId"
+        >
+
+        <div class="appointment-form-grid">
+            <label>
+                Nombre del cliente
+                <input
+                    id="barberClientName"
+                    type="text"
+                    maxlength="120"
+                    required
+                >
+            </label>
+
+            <label>
+                Teléfono
+                <input
+                    id="barberClientPhone"
+                    type="tel"
+                    maxlength="40"
+                >
+            </label>
+
+            <label>
+                Servicio
+                <select
+                    id="barberServiceId"
+                    required
+                >
+                    <option value="">Selecciona un servicio</option>
+                </select>
+            </label>
+
+            <label>
+                Fecha
+                <input
+                    id="barberAppointmentDate"
+                    type="date"
+                    required
+                >
+            </label>
+
+            <label>
+                Hora
+                <select
+                    id="barberAppointmentTime"
+                    required
+                >
+                    <option value="">Selecciona una hora</option>
+                </select>
+            </label>
+
+            <label>
+                Origen
+                <select id="barberAppointmentOrigin">
+                    <option value="phone">Teléfono</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="instagram">Instagram</option>
+                    <option value="facebook">Facebook</option>
+                    <option value="walk-in">En persona</option>
+                </select>
+            </label>
+        </div>
+
+        <label>
+            Notas
+            <textarea
+                id="barberAppointmentNotes"
+                maxlength="1000"
+                rows="3"
+            ></textarea>
+        </label>
+
+        <div class="appointment-form-actions">
+            <button
+                type="submit"
+                id="saveBarberAppointmentButton"
+            >
+                Guardar cita
+            </button>
+
+            <button
+                type="button"
+                id="resetBarberAppointmentButton"
+            >
+                Nueva cita
+            </button>
+        </div>
+
+        <p
+            id="barberAppointmentMessage"
+            role="status"
+            aria-live="polite"
+        ></p>
+    </form>
+</section>
+
+
+</section>
+
+
+
+                <article class="card">
+                    <h3>Cambiar contraseña</h3>
+
+                    <form id="passwordForm">
+                        <div class="field">
+                            <label for="currentPassword">
+                                Contraseña actual
+                            </label>
+                            <input
+                                id="currentPassword"
+                                type="password"
+                                autocomplete="current-password"
+                                required
+                            >
+                        </div>
+
+                        <div class="field">
+                            <label for="newPassword">
+                                Nueva contraseña
+                            </label>
+                            <input
+                                id="newPassword"
+                                type="password"
+                                autocomplete="new-password"
+                                minlength="8"
+                                required
+                            >
+                        </div>
+
+                        <div class="field">
+                            <label for="confirmPassword">
+                                Confirmar nueva contraseña
+                            </label>
+                            <input
+                                id="confirmPassword"
+                                type="password"
+                                autocomplete="new-password"
+                                minlength="8"
+                                required
+                            >
+                        </div>
+
+                        <button
+                            id="changePasswordButton"
+                            type="submit"
+                        >
+                            Actualizar contraseña
+                        </button>
+
+                        <p
+                            id="passwordMessage"
+                            class="message"
+                            role="status"
+                            aria-live="polite"
+                        ></p>
+                    </form>
+                </article>
+            </div>
+        </section>
+
+        <section id="errorSection" hidden>
+            <h2>No se pudo cargar tu perfil</h2>
+            <p id="errorMessage" class="subtitle"></p>
+            <button id="retryButton" type="button">
+                Reintentar
+            </button>
+        </section>
+    </main>
+
+    <script type="module">
+        import { auth, db } from "./js/firebase.js";
+
+        import {
+            protectPage,
+            logout
+        } from "./js/auth.js";
+
+        import {
+            EmailAuthProvider,
+            reauthenticateWithCredential,
+            updatePassword
+        } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
+
+        import {
+            doc,
+            getDoc
+        } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+        import { mountBarberCalendar } from "./js/barber-calendar.js";
+
+        import {
+    cancelAppointment
+} from "./js/appointment-booking.js";
+
+import {
+    initializeBarberAppointmentForm
+} from "./js/barber-appointment-form.js";
+
+        const loadingSection =
+            document.getElementById("loadingSection");
+
+        const panelSection =
+            document.getElementById("panelSection");
+
+        const errorSection =
+            document.getElementById("errorSection");
+
+        const logoutButton =
+            document.getElementById("logoutButton");
+
+        const passwordForm =
+            document.getElementById("passwordForm");
+
+        const passwordMessage =
+            document.getElementById("passwordMessage");
+
+        const dayNames = {
+            monday: "Lunes",
+            tuesday: "Martes",
+            wednesday: "Miércoles",
+            thursday: "Jueves",
+            friday: "Viernes",
+            saturday: "Sábado",
+            sunday: "Domingo"
+        };
+
+        function showError(message) {
+            loadingSection.hidden = true;
+            panelSection.hidden = true;
+            errorSection.hidden = false;
+
+            document.getElementById(
+                "errorMessage"
+            ).textContent = message;
+        }
+
+        function renderSchedule(schedule = {}) {
+            const container =
+                document.getElementById("scheduleList");
+
+            container.replaceChildren();
+
+            for (const [day, label] of Object.entries(dayNames)) {
+                const config = schedule[day];
+
+                const row = document.createElement("div");
+                row.className = "schedule-row";
+
+                const name = document.createElement("span");
+                name.textContent = label;
+
+                const hours = document.createElement("span");
+
+                hours.textContent = config?.enabled
+                    ? `${config.start} - ${config.end}`
+                    : "Descanso";
+
+                row.append(name, hours);
+                container.append(row);
+            }
+        }
+
+        async function loadPanel() {
+            loadingSection.hidden = false;
+            panelSection.hidden = true;
+            errorSection.hidden = true;
+
+            try {
+                const user = await protectPage("barber");
+
+                if (!user) {
+                    return;
+                }
+
+                const profileSnapshot = await getDoc(
+                    doc(db, "users", user.uid)
+                );
+
+                if (!profileSnapshot.exists()) {
+                    throw new Error(
+                        "Tu cuenta no tiene un perfil asignado."
+                    );
+                }
+
+                const profile = profileSnapshot.data();
+
+                if (
+                    profile.role !== "barber" ||
+                    profile.active !== true ||
+                    !profile.barberId
+                ) {
+                    throw new Error(
+                        "Tu cuenta no tiene acceso activo."
+                    );
+                }
+
+                const barberSnapshot = await getDoc(
+                    doc(db, "barbers", profile.barberId)
+                );
+
+                if (!barberSnapshot.exists()) {
+                    throw new Error(
+                        "No se encontró tu ficha de barbero."
+                    );
+                }
+
+                const barber = barberSnapshot.data();
+
+                initializeBarberAppointmentForm(barber);
+
+                const calendarContainer =
+    document.getElementById("barberCalendar");
+
+if (calendarContainer) {
+    mountBarberCalendar(
+        calendarContainer,
+        profile.barberId
+    );
+}
+
+                document.getElementById(
+                    "welcomeTitle"
+                ).textContent = `Bienvenido, ${barber.name || "Barbero"}`;
+
+                document.getElementById(
+                    "profileName"
+                ).textContent = barber.name || "Sin nombre";
+
+                document.getElementById(
+                    "profileEmail"
+                ).textContent = user.email || "Sin correo";
+
+                document.getElementById(
+                    "profileStatus"
+                ).textContent = barber.status === "active"
+                    ? "Activo"
+                    : "Inactivo";
+
+                renderSchedule(barber.schedule);
+
+                loadingSection.hidden = true;
+                panelSection.hidden = false;
+                logoutButton.hidden = false;
+
+            } catch (error) {
+                console.error(
+                    "Error cargando panel de barbero:",
+                    error
+                );
+
+                showError(
+                    "No fue posible consultar tu información. " +
+                    "Comprueba tu conexión y tus permisos."
+                );
+            }
+        }
+
+        passwordForm.addEventListener(
+            "submit",
+            async event => {
+                event.preventDefault();
+
+                const user = auth.currentUser;
+
+                if (!user || !user.email) {
+                    passwordMessage.textContent =
+                        "Debes iniciar sesión nuevamente.";
+                    return;
+                }
+
+                const currentPassword =
+                    document.getElementById(
+                        "currentPassword"
+                    ).value;
+
+                const newPassword =
+                    document.getElementById(
+                        "newPassword"
+                    ).value;
+
+                const confirmPassword =
+                    document.getElementById(
+                        "confirmPassword"
+                    ).value;
+
+                if (newPassword.length < 8) {
+                    passwordMessage.textContent =
+                        "Usa al menos 8 caracteres.";
+                    return;
+                }
+
+                if (newPassword !== confirmPassword) {
+                    passwordMessage.textContent =
+                        "Las contraseñas nuevas no coinciden.";
+                    return;
+                }
+
+                const button = document.getElementById(
+                    "changePasswordButton"
+                );
+
+                button.disabled = true;
+                passwordMessage.textContent = "";
+                passwordMessage.classList.remove("success");
+
+                try {
+                    const credential =
+                        EmailAuthProvider.credential(
+                            user.email,
+                            currentPassword
+                        );
+
+                    await reauthenticateWithCredential(
+                        user,
+                        credential
+                    );
+
+                    await updatePassword(
+                        user,
+                        newPassword
+                    );
+
+                    passwordForm.reset();
+
+                    passwordMessage.textContent =
+                        "Contraseña actualizada correctamente.";
+
+                    passwordMessage.classList.add("success");
+
+                } catch (error) {
+                    console.error(
+                        "Error al cambiar contraseña:",
+                        error
+                    );
+
+                    passwordMessage.textContent =
+                        error.code === "auth/invalid-credential"
+                            ? "La contraseña actual es incorrecta."
+                            : "No se pudo actualizar la contraseña. Intenta nuevamente.";
+
+                } finally {
+                    button.disabled = false;
+                }
+            }
+        );
+
+        logoutButton.addEventListener(
+            "click",
+            async () => {
+                logoutButton.disabled = true;
+
+                try {
+                    await logout();
+                } catch (error) {
+                    console.error(error);
+                    logoutButton.disabled = false;
+                }
+            }
+        );
+
+        document.getElementById(
+            "retryButton"
+        ).addEventListener("click", loadPanel);
+
+        loadPanel();
+
+
+const barberCalendarElement =
+    document.getElementById("barberCalendar");
+
+if (barberCalendarElement) {
+    barberCalendarElement.addEventListener(
+        "appointment:cancel",
+        async event => {
+            const appointment = event.detail?.appointment;
+
+            if (!appointment?.id) {
+                alert("No se pudo identificar la cita.");
+                return;
+            }
+
+            const confirmed = window.confirm(
+                `¿Cancelar la cita de ${appointment.clientName} ` +
+                `del ${appointment.date} a las ${appointment.time}?`
+            );
+
+            if (!confirmed) {
+                return;
+            }
+
+            try {
+                await cancelAppointment(appointment.id);
+
+                alert("La cita se canceló correctamente.");
+            } catch (error) {
+                console.error(
+                    "Error al cancelar la cita:",
+                    error
+                );
+
+                alert(
+                    error.message ||
+                    "No se pudo cancelar la cita."
+                );
+            }
+        }
+    );
+}
+    </script>
+</body>
+</html>
+
+
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>EDUARDO'S BARBER | Citas</title>
+
+    <link rel="stylesheet" href="css/global.css">
+    <link rel="stylesheet" href="css/admin.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link rel="stylesheet" href="css/theme.css">
+    <link rel="stylesheet" href="css/appointments-calendar.css">
+</head>
+
+<body>
+
+<div class="app">
+
+    <!-- SIDEBAR -->
+
+    <aside class="sidebar">
+
+        <div class="sidebar-brand">
+            <img
+                src="assets/logo.png"
+                alt="Eduardo's Barbershop"
+                width="205"
+                height="125"
+            >
+        </div>
+
+        <span class="sidebar-label">
+            Administración
+        </span>
+
+        <nav class="sidebar-nav">
+
+            <a href="index.html" class="sidebar-link">
+                <span>▣</span>
+                Dashboard
+            </a>
+
+            <a href="citas.html" class="sidebar-link active">
+                <span>◷</span>
+                Citas
+            </a>
+
+            <a href="clientes.html" class="sidebar-link">
+                <span>♙</span>
+                Clientes
+            </a>
+
+            <a href="barberos.html" class="sidebar-link">
+                <span>✂</span>
+                Barberos
+            </a>
+
+            <a href="servicios.html" class="sidebar-link">
+                <span>≡</span>
+                Servicios
+            </a>
+
+            <a href="reportes.html" class="sidebar-link">
+                <span>↗</span>
+                Reportes
+            </a>
+
+        </nav>
+
+    </aside>
+
+    <!-- MAIN -->
+
+    <main class="main">
+
+        <header class="topbar">
+
+            <h2>Citas</h2>
+
+            <div class="admin-user">
+
+                <span>Administrador</span>
+
+                <div class="avatar">A</div>
+
+            </div>
+
+        </header>
+
+        <div class="content">
+
+            <!-- ENCABEZADO -->
+
+            <div class="page-heading">
+
+                <div>
+                    <h1>Citas</h1>
+
+                    <p>
+                        Administra la agenda de la barbería.
+                    </p>
+                </div>
+
+                <button
+                    class="btn btn-dark"
+                    id="newAppointmentButton"
+                    type="button"
+                >
+                    + Nueva cita
+                </button>
+
+            </div>
+
+            <!-- FILTROS DE ESTADO -->
+
+            <div class="filters">
+
+                <button
+                    class="filter active"
+                    data-filter="all"
+                    type="button"
+                >
+                    Todas
+                </button>
+
+                <button
+                    class="filter"
+                    data-filter="today"
+                    type="button"
+                >
+                    Hoy
+                </button>
+
+                <button
+                    class="filter"
+                    data-filter="pending"
+                    type="button"
+                >
+                    Pendientes
+                </button>
+
+                <button
+                    class="filter"
+                    data-filter="confirmed"
+                    type="button"
+                >
+                    Confirmadas
+                </button>
+
+                <button
+                    class="filter"
+                    data-filter="completed"
+                    type="button"
+                >
+                    Completadas
+                </button>
+
+                <button
+                    class="filter"
+                    data-filter="cancelled"
+                    type="button"
+                >
+                    Canceladas
+                </button>
+
+                <button
+                    class="filter"
+                    data-filter="no-show"
+                    type="button"
+                >
+                    No asistió
+                </button>
+
+            </div>
+
+            <!-- CALENDARIO -->
+
+            <section class="appointment-calendar-panel">
+
+                <div class="appointment-calendar-heading">
+
+                    <div>
+                        <h2>Calendario de citas</h2>
+
+                        <p>
+                            Consulta las citas por barbero y rango de fechas.
+                        </p>
+                    </div>
+
+                    <span
+                        id="calendarAppointmentCount"
+                        class="calendar-count"
+                    >
+                        0 citas
+                    </span>
+
+                </div>
+
+                <!-- FILTROS DEL CALENDARIO -->
+
+                <div class="appointment-calendar-filters">
+
+                    <div class="field">
+
+                        <label for="calendarBarberFilter">
+                            Barbero
+                        </label>
+
+                        <select id="calendarBarberFilter">
+                            <option value="all">
+                                Todos los barberos
+                            </option>
+                        </select>
+
+                    </div>
+
+                    <div class="field">
+    <label for="calendarStartDate">Fecha de inicio</label>
+    <input
+        type="date"
+        id="calendarStartDate"
+        aria-label="Seleccionar fecha de inicio"
+    >
+</div>
+
+<div class="field">
+    <label for="calendarEndDate">Fecha de fin</label>
+    <input
+        type="date"
+        id="calendarEndDate"
+        aria-label="Seleccionar fecha de fin"
+    >
+</div>
+
+                    <div class="calendar-filter-actions">
+
+                        <button
+                            type="button"
+                            class="btn btn-outline"
+                            id="calendarTodayButton"
+                        >
+                            Esta semana
+                        </button>
+
+                    </div>
+
+                </div>
+
+                <p
+                    id="calendarFilterMessage"
+                    class="calendar-filter-message"
+                    role="status"
+                    aria-live="polite"
+                ></p>
+
+                <!-- LEYENDA -->
+
+                <div class="appointment-calendar-legend">
+
+                    <span>
+                        <i class="calendar-dot pending"></i>
+                        Pendiente
+                    </span>
+
+                    <span>
+                        <i class="calendar-dot confirmed"></i>
+                        Confirmada
+                    </span>
+
+                    <span>
+                        <i class="calendar-dot completed"></i>
+                        Completada
+                    </span>
+
+                    <span>
+                        <i class="calendar-dot cancelled"></i>
+                        Cancelada
+                    </span>
+
+                    <span>
+                        <i class="calendar-dot no-show"></i>
+                        No asistió
+                    </span>
+
+                </div>
+
+                <div
+                    id="appointmentCalendar"
+                    class="appointment-calendar"
+                    aria-live="polite"
+                ></div>
+
+            </section>
+
+            <!-- TABLA DE CITAS -->
+
+            <div class="panel">
+
+                <div class="table-wrapper">
+
+                    <table>
+
+                        <thead>
+
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Hora</th>
+                                <th>Cliente</th>
+                                <th>Servicio</th>
+                                <th>Barbero</th>
+                                <th>Origen</th>
+                                <th>Estado</th>
+                                <th>Acciones</th>
+                            </tr>
+
+                        </thead>
+
+                        <tbody id="appointmentsTable"></tbody>
+
+                    </table>
+
+                </div>
+
+            </div>
+
+        </div>
+
+    </main>
+
+</div>
+
+<!-- =====================================================
+     MODAL NUEVA CITA
+===================================================== -->
+
+<div
+    class="modal-overlay hidden"
+    id="appointmentModal"
+>
+
+    <div class="modal">
+
+        <div class="modal-header">
+
+            <div>
+                <h2>Nueva cita</h2>
+
+                <p>
+                    Registra una nueva reservación.
+                </p>
+            </div>
+
+            <button
+                class="modal-close"
+                id="closeModalButton"
+                type="button"
+                aria-label="Cerrar"
+            >
+                ×
+            </button>
+
+        </div>
+
+        <div class="modal-body">
+
+            <!-- CLIENTE -->
+
+            <section class="modal-section">
+
+                <h3>1. Cliente</h3>
+
+                <div class="form-grid">
+
+                    <div class="field">
+
+                        <label for="appointmentPhone">
+                            Teléfono
+                        </label>
+
+                        <input
+                            type="tel"
+                            id="appointmentPhone"
+                            placeholder="Ej. 667 123 4567"
+                        >
+
+                    </div>
+
+                    <div class="field">
+
+                        <label for="appointmentName">
+                            Nombre
+                        </label>
+
+                        <input
+                            type="text"
+                            id="appointmentName"
+                            placeholder="Nombre del cliente"
+                        >
+
+                    </div>
+
+                </div>
+
+                <div id="customerDetection"></div>
+
+            </section>
+
+            <!-- SERVICIO Y BARBERO -->
+
+            <section class="modal-section">
+
+                <h3>2. Servicio y barbero</h3>
+
+                <div class="form-grid">
+
+                    <div class="field">
+
+                        <label for="appointmentService">
+                            Servicio
+                        </label>
+
+                        <select id="appointmentService"></select>
+
+                    </div>
+
+                    <div class="field">
+
+                        <label for="appointmentBarber">
+                            Barbero
+                        </label>
+
+                        <select id="appointmentBarber"></select>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+            <!-- FECHA Y HORARIO -->
+
+            <section class="modal-section">
+
+                <h3>3. Fecha y horario</h3>
+
+                <div class="field">
+
+                    <label for="appointmentDate">
+                        Fecha
+                    </label>
+
+                    <input
+                        type="date"
+                        id="appointmentDate"
+                    >
+
+                </div>
+
+                <div
+                    class="time-grid"
+                    id="appointmentTimes"
+                ></div>
+
+            </section>
+
+            <!-- INFORMACIÓN ADICIONAL -->
+
+            <section class="modal-section">
+
+                <h3>4. Información adicional</h3>
+
+                <div class="form-grid">
+
+                    <div class="field">
+
+                        <label for="appointmentOrigin">
+                            Origen
+                        </label>
+
+                        <select id="appointmentOrigin">
+
+                            <option value="whatsapp">
+                                WhatsApp
+                            </option>
+
+                            <option value="instagram">
+                                Instagram
+                            </option>
+
+                            <option value="facebook">
+                                Facebook
+                            </option>
+
+                            <option value="phone">
+                                Teléfono
+                            </option>
+
+                            <option value="walk-in">
+                                En persona
+                            </option>
+
+                        </select>
+
+                    </div>
+
+                    <div class="field">
+
+                        <label for="appointmentStatus">
+                            Estado
+                        </label>
+
+                        <select id="appointmentStatus">
+
+                            <option value="confirmed">
+                                Confirmada
+                            </option>
+
+                            <option value="pending">
+                                Pendiente
+                            </option>
+
+                        </select>
+
+                    </div>
+
+                </div>
+
+                <div class="field top-space">
+
+                    <label for="appointmentNotes">
+                        Notas internas
+                    </label>
+
+                    <textarea
+                        id="appointmentNotes"
+                        placeholder="Ej. Cliente pidió fade bajo..."
+                    ></textarea>
+
+                </div>
+
+            </section>
+
+        </div>
+
+        <div class="modal-footer">
+
+            <button
+                class="btn btn-outline"
+                id="cancelModalButton"
+                type="button"
+            >
+                Cancelar
+            </button>
+
+            <button
+                class="btn btn-dark"
+                id="saveAppointmentButton"
+                type="button"
+            >
+                Guardar cita
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+<!-- NOTIFICACIONES -->
+
+<div class="toast" id="toast"></div>
+
+<script
+    type="module"
+    src="js/appointments.js"
+></script>
+
+</body>
+</html>
+<!DOCTYPE html><html lang="es"><head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>EDUARDO'S BARBER | Dashboard</title>
+
+    <link rel="stylesheet" href="css/global.css">
+    <link rel="stylesheet" href="css/admin.css">
+    <link rel="stylesheet" href="css/responsive.css">
+    <link rel="stylesheet" href="css/theme.css">
+
+    <script type="module" src="js/admin-guard.js"></script>
+</head>
+
+<body>
+
+<div class="app">
+
+    <!-- =====================================================
+         SIDEBAR
+    ====================================================== -->
+
+    <aside class="sidebar">
+
+       
+<div class="sidebar-brand">
+    <img src="assets/logo.png" alt="Eduardo's Barbershop" width="205" height="125">
+</div>
+
+
+        <span class="sidebar-label">
+            Administración
+        </span>
+
+        <nav class="sidebar-nav">
+
+            <a href="index.html" class="sidebar-link active">
+                <span>▣</span>
+                Dashboard
+            </a>
+
+            <a href="citas.html" class="sidebar-link">
+                <span>◷</span>
+                Citas
+            </a>
+
+            <a href="clientes.html" class="sidebar-link">
+                <span>♙</span>
+                Clientes
+            </a>
+
+            <a href="barberos.html" class="sidebar-link">
+                <span>✂</span>
+                Barberos
+            </a>
+
+            <a href="servicios.html" class="sidebar-link">
+                <span>≡</span>
+                Servicios
+            </a>
+
+            
+
+            <a href="reportes.html" class="sidebar-link">
+                <span>↗</span>
+                Reportes
+            </a>
+
+        </nav>
+
+    </aside>
+
+
+    <!-- =====================================================
+         MAIN
+    ====================================================== -->
+
+    <main class="main">
+
+        <header class="topbar">
+
+            <div>
+                <h2>Dashboard</h2>
+            </div>
+
+            <div class="admin-user">
+
+                <span>
+                    Administrador
+                </span>
+
+                <div class="avatar">
+                    A
+                </div>
+
+            </div>
+
+        </header>
+
+
+        <div class="content">
+
+            <!-- =================================================
+                 PAGE HEADING
+            ================================================== -->
+
+            <div class="page-heading">
+
+                <div>
+
+                    <h1>
+                        Dashboard
+                    </h1>
+
+                    <p>
+                        Resumen general de BARBER SHOP.
+                    </p>
+
+                </div>
+
+                <div class="heading-actions">
+
+                    <button type="button" class="btn btn-dark" id="newAppointmentButton">
+                        + Nueva cita
+                    </button>
+
+                    
+
+                </div>
+
+            </div>
+
+
+            <!-- =================================================
+                 STATS
+            ================================================== -->
+
+            <section class="stats-grid" id="dashboardStats"></section>
+
+
+            <!-- =================================================
+                 DASHBOARD GRID
+            ================================================== -->
+
+            <section class="dashboard-grid">
+
+                <!-- PRÓXIMAS CITAS -->
+
+                <div class="panel">
+
+                    <div class="panel-header">
+
+                        <div>
+
+                            <h3>
+                                Próximas citas
+                            </h3>
+
+                            <p>
+                                Agenda de la barbería
+                            </p>
+
+                        </div>
+
+                        <a href="citas.html" class="text-link">
+                            Ver todas
+                        </a>
+
+                    </div>
+
+
+                    <div class="panel-body" id="dashboardAppointments"></div>
+
+                </div>
+
+
+                <!-- ACCIONES RÁPIDAS -->
+
+                <div class="panel">
+
+                    <div class="panel-header">
+
+                        <div>
+
+                            <h3>
+                                Acciones rápidas
+                            </h3>
+
+                            <p>
+                                Operaciones frecuentes
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <div class="panel-body">
+
+                        <div class="quick-actions">
+
+                            <button type="button" class="btn btn-dark full" id="quickNewAppointment">
+                                + Agendar cita
+                            </button>
+
+                            <a href="citas.html" class="btn btn-outline full center">
+                                Ver agenda
+                            </a>
+
+                            <a href="clientes.html" class="btn btn-outline full center">
+                                Buscar cliente
+                            </a>
+
+                            <a href="barberos.html" class="btn btn-outline full center">
+                                Administrar barberos
+                            </a>
+
+                            
+
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+        </div>
+
+    </main>
+
+</div>
+
+
+<!-- =====================================================
+     MODAL NUEVA CITA
+===================================================== -->
+
+<div class="modal-overlay hidden" id="appointmentModal">
+
+    <div class="modal">
+
+        <div class="modal-header">
+
+            <div>
+
+                <h2>
+                    Nueva cita
+                </h2>
+
+                <p>
+                    Registra una reservación recibida por redes,
+                    llamada o directamente en la barbería.
+                </p>
+
+            </div>
+
+            <button type="button" class="modal-close" id="closeModalButton">
+                ×
+            </button>
+
+        </div>
+
+
+        <div class="modal-body">
+
+            <!-- =================================================
+                 CLIENTE
+            ================================================== -->
+
+            <section class="modal-section">
+
+                <h3>
+                    1. Cliente
+                </h3>
+
+                <div class="form-grid">
+
+                    <div class="field">
+
+                        <label for="appointmentPhone">
+                            Teléfono
+                        </label>
+
+                        <input type="tel" id="appointmentPhone" placeholder="Ej. 667 123 4567" autocomplete="tel">
+
+                    </div>
+
+
+                    <div class="field">
+
+                        <label for="appointmentName">
+                            Nombre
+                        </label>
+
+                        <input type="text" id="appointmentName" placeholder="Nombre del cliente" autocomplete="name">
+
+                    </div>
+
+                </div>
+
+
+                <div id="customerDetection"></div>
+
+            </section>
+
+
+            <!-- =================================================
+                 SERVICIO Y BARBERO
+            ================================================== -->
+
+            <section class="modal-section">
+
+                <h3>
+                    2. Servicio y barbero
+                </h3>
+
+                <div class="form-grid">
+
+                    <div class="field">
+
+                        <label for="appointmentService">
+                            Servicio
+                        </label>
+
+                        <select id="appointmentService"></select>
+
+                    </div>
+
+
+                    <div class="field">
+
+                        <label for="appointmentBarber">
+                            Barbero
+                        </label>
+
+                        <select id="appointmentBarber"></select>
+
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- =================================================
+                 FECHA Y HORARIO
+            ================================================== -->
+
+            <section class="modal-section">
+
+                <h3>
+                    3. Fecha y horario
+                </h3>
+
+                <div class="field">
+
+                    <label for="appointmentDate">
+                        Fecha
+                    </label>
+
+                    <input type="date" id="appointmentDate">
+
+                </div>
+
+
+                <div class="time-grid" id="appointmentTimes"></div>
+
+            </section>
+
+
+            <!-- =================================================
+                 INFORMACIÓN ADICIONAL
+            ================================================== -->
+
+            <section class="modal-section">
+
+                <h3>
+                    4. Información adicional
+                </h3>
+
+                <div class="form-grid">
+
+                    <div class="field">
+
+                        <label for="appointmentOrigin">
+                            Origen
+                        </label>
+
+                        <select id="appointmentOrigin">
+
+                            <option value="whatsapp">
+                                WhatsApp
+                            </option>
+
+                            <option value="instagram">
+                                Instagram
+                            </option>
+
+                            <option value="facebook">
+                                Facebook
+                            </option>
+
+                            <option value="phone">
+                                Teléfono
+                            </option>
+
+                            <option value="walk-in">
+                                En persona
+                            </option>
+
+                        </select>
+
+                    </div>
+
+
+                    <div class="field">
+
+                        <label for="appointmentStatus">
+                            Estado
+                        </label>
+
+                        <select id="appointmentStatus">
+
+                            <option value="confirmed">
+                                Confirmada
+                            </option>
+
+                            <option value="pending">
+                                Pendiente
+                            </option>
+
+                        </select>
+
+                    </div>
+
+                </div>
+
+
+                <div class="field top-space">
+
+                    <label for="appointmentNotes">
+                        Notas internas
+                    </label>
+
+                    <textarea id="appointmentNotes" placeholder="Ej. Cliente pidió fade bajo..."></textarea>
+
+                </div>
+
+            </section>
+
+        </div>
+
+
+        <div class="modal-footer">
+
+            <button type="button" class="btn btn-outline" id="cancelModalButton">
+                Cancelar
+            </button>
+
+            <button type="button" class="btn btn-dark" id="saveAppointmentButton">
+                Guardar cita
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- =====================================================
+     TOAST
+===================================================== -->
+
+<div class="toast" id="toast"></div>
+
+
+<!-- =====================================================
+     JAVASCRIPT
+===================================================== -->
+
+<script type="module" src="js/admin.js"></script>
+
+
+</body></html>

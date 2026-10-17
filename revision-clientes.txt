@@ -1,0 +1,3282 @@
+
+/* =========================================================
+   EDUARDO'S BARBERSHOP
+   FIRESTORE-STORAGE.JS
+
+   Almacenamiento en Firebase Firestore.
+   Sin localStorage.
+   Sin datos de demostración.
+========================================================= */
+
+import {
+    db,
+    auth
+} from "./firebase.js";
+
+import {
+    collection,
+    doc,
+    getDoc,
+    getDocs,
+    setDoc,
+    updateDoc,
+    deleteDoc,
+    query,
+    where
+} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+/* =========================================================
+   COLECCIONES PERMITIDAS
+========================================================= */
+
+const COLLECTIONS = Object.freeze({
+    customers: "customers",
+    barbers: "barbers",
+    services: "services",
+    appointments: "appointments"
+});
+
+/* =========================================================
+   AUTENTICACIÓN
+========================================================= */
+
+export async function waitForAuth() {
+    await auth.authStateReady();
+
+    const user = auth.currentUser;
+
+    if (!user) {
+        throw new Error(
+            "Debes iniciar sesión como administrador."
+        );
+    }
+
+    return user;
+}
+
+/* =========================================================
+   UTILIDADES
+========================================================= */
+
+export function generateId(prefix = "item") {
+    const safePrefix = String(prefix)
+        .trim()
+        .replace(/[^a-zA-Z0-9_-]/g, "-") || "item";
+
+    if (
+        typeof crypto !== "undefined" &&
+        typeof crypto.randomUUID === "function"
+    ) {
+        return `${safePrefix}-${crypto.randomUUID()}`;
+    }
+
+    return (
+        `${safePrefix}-${Date.now()}-` +
+        Math.random().toString(16).slice(2)
+    );
+}
+
+export function normalizePhone(phone) {
+    return String(phone ?? "").replace(/\D/g, "");
+}
+
+function validateCollection(collectionName) {
+    if (
+        !Object.prototype.hasOwnProperty.call(
+            COLLECTIONS,
+            collectionName
+        )
+    ) {
+        throw new Error(
+            `Colección no permitida: ${collectionName}`
+        );
+    }
+
+    return COLLECTIONS[collectionName];
+}
+
+function validateId(id) {
+    if (
+        typeof id !== "string" &&
+        typeof id !== "number"
+    ) {
+        throw new Error("Identificador inválido.");
+    }
+
+    const value = String(id).trim();
+
+    if (!value || value.includes("/")) {
+        throw new Error("Identificador inválido.");
+    }
+
+    return value;
+}
+
+function cleanData(value) {
+    if (Array.isArray(value)) {
+        return value.map(cleanData);
+    }
+
+    if (
+        value !== null &&
+        typeof value === "object" &&
+        Object.getPrototypeOf(value) === Object.prototype
+    ) {
+        const result = {};
+
+        for (const [key, item] of Object.entries(value)) {
+            if (item !== undefined) {
+                result[key] = cleanData(item);
+            }
+        }
+
+        return result;
+    }
+
+    return value;
+}
+
+function validateRecord(record) {
+    if (
+        !record ||
+        typeof record !== "object" ||
+        Array.isArray(record)
+    ) {
+        throw new Error("El registro debe ser un objeto.");
+    }
+
+    return record;
+}
+
+function snapshotToRecords(snapshot) {
+    return snapshot.docs.map(document => ({
+        ...document.data(),
+        id: document.id
+    }));
+}
+
+/* =========================================================
+   CONSULTAR TODOS LOS REGISTROS
+========================================================= */
+
+export async function getAll(collectionName) {
+    await waitForAuth();
+
+    const name = validateCollection(collectionName);
+
+    const snapshot = await getDocs(
+        collection(db, name)
+    );
+
+    return snapshotToRecords(snapshot);
+}
+
+/* =========================================================
+   CONSULTAR UN REGISTRO
+========================================================= */
+
+export async function getOne(collectionName, id) {
+    await waitForAuth();
+
+    const name = validateCollection(collectionName);
+    const validId = validateId(id);
+
+    const snapshot = await getDoc(
+        doc(db, name, validId)
+    );
+
+    if (!snapshot.exists()) {
+        return null;
+    }
+
+    return {
+        ...snapshot.data(),
+        id: snapshot.id
+    };
+}
+
+/* =========================================================
+   CREAR O REEMPLAZAR UN REGISTRO
+========================================================= */
+
+export async function saveOne(collectionName, record) {
+    await waitForAuth();
+
+    const name = validateCollection(collectionName);
+    const validRecord = validateRecord(record);
+
+    const id = validRecord.id
+        ? validateId(validRecord.id)
+        : generateId(collectionName);
+
+    const data = cleanData({
+        ...validRecord,
+        id
+    });
+
+    await setDoc(
+        doc(db, name, id),
+        data
+    );
+
+    return data;
+}
+
+/* =========================================================
+   ACTUALIZAR UN REGISTRO EXISTENTE
+========================================================= */
+
+export async function updateOne(
+    collectionName,
+    id,
+    changes
+) {
+    await waitForAuth();
+
+    const name = validateCollection(collectionName);
+    const validId = validateId(id);
+    const validChanges = validateRecord(changes);
+
+    const data = cleanData({
+        ...validChanges
+    });
+
+    delete data.id;
+
+    if (Object.keys(data).length === 0) {
+        throw new Error(
+            "No hay cambios para actualizar."
+        );
+    }
+
+    await updateDoc(
+        doc(db, name, validId),
+        data
+    );
+
+    return getOne(collectionName, validId);
+}
+
+/* =========================================================
+   ELIMINAR UN REGISTRO
+========================================================= */
+
+export async function deleteOne(collectionName, id) {
+    await waitForAuth();
+
+    const name = validateCollection(collectionName);
+    const validId = validateId(id);
+
+    await deleteDoc(
+        doc(db, name, validId)
+    );
+
+    return true;
+}
+
+/* =========================================================
+   BUSCAR REGISTROS POR CAMPO
+========================================================= */
+
+export async function findByField(
+    collectionName,
+    field,
+    value
+) {
+    await waitForAuth();
+
+    const name = validateCollection(collectionName);
+
+    const allowedFields = new Set([
+        "normalizedPhone",
+        "customerId",
+        "barberId",
+        "serviceId",
+        "status"
+    ]);
+
+    if (!allowedFields.has(field)) {
+        throw new Error(
+            "Campo de consulta no permitido."
+        );
+    }
+
+    const snapshot = await getDocs(
+        query(
+            collection(db, name),
+            where(field, "==", value)
+        )
+    );
+
+    return snapshotToRecords(snapshot);
+}
+
+/* =========================================================
+   CLIENTES
+========================================================= */
+
+export function getCustomers() {
+    return getAll("customers");
+}
+
+export function getCustomer(id) {
+    return getOne("customers", id);
+}
+
+export async function saveCustomer(customer) {
+    const record = validateRecord(customer);
+
+    return saveOne("customers", {
+        ...record,
+        normalizedPhone: normalizePhone(record.phone)
+    });
+}
+
+export async function updateCustomer(id, changes) {
+    const record = validateRecord(changes);
+    const data = { ...record };
+
+    if (
+        Object.prototype.hasOwnProperty.call(
+            data,
+            "phone"
+        )
+    ) {
+        data.normalizedPhone = normalizePhone(data.phone);
+    }
+
+    return updateOne("customers", id, data);
+}
+
+export function deleteCustomer(id) {
+    return deleteOne("customers", id);
+}
+
+export async function findCustomerByPhone(phone) {
+    const normalized = normalizePhone(phone);
+
+    if (!normalized) {
+        return null;
+    }
+
+    const customers = await findByField(
+        "customers",
+        "normalizedPhone",
+        normalized
+    );
+
+    return customers[0] ?? null;
+}
+
+export async function getOrCreateCustomer(name, phone) {
+    const normalized = normalizePhone(phone);
+
+    if (!normalized) {
+        throw new Error(
+            "El teléfono del cliente es obligatorio."
+        );
+    }
+
+    const existing = await findCustomerByPhone(phone);
+
+    if (existing) {
+        return updateCustomer(existing.id, {
+            name,
+            phone
+        });
+    }
+
+    return saveCustomer({
+        id: generateId("customer"),
+        name,
+        phone,
+        visits: 0
+    });
+}
+
+export async function addCustomerVisit(phone) {
+    const customer = await findCustomerByPhone(phone);
+
+    if (!customer) {
+        return false;
+    }
+
+    await updateCustomer(customer.id, {
+        visits: (Number(customer.visits) || 0) + 1
+    });
+
+    return true;
+}
+
+/* =========================================================
+   BARBEROS
+========================================================= */
+
+export function getBarbers() {
+    return getAll("barbers");
+}
+
+export function getBarber(id) {
+    return getOne("barbers", id);
+}
+
+export function saveBarber(barber) {
+    return saveOne("barbers", barber);
+}
+
+export function updateBarber(id, changes) {
+    return updateOne("barbers", id, changes);
+}
+
+export function deleteBarber(id) {
+    return deleteOne("barbers", id);
+}
+
+/* =========================================================
+   SERVICIOS
+========================================================= */
+
+export function getServices() {
+    return getAll("services");
+}
+
+export function getService(id) {
+    return getOne("services", id);
+}
+
+export function saveService(service) {
+    return saveOne("services", service);
+}
+
+export function updateService(id, changes) {
+    return updateOne("services", id, changes);
+}
+
+export function deleteService(id) {
+    return deleteOne("services", id);
+}
+
+/* =========================================================
+   CITAS
+========================================================= */
+
+export function getAppointments() {
+    return getAll("appointments");
+}
+
+export function getAppointment(id) {
+    return getOne("appointments", id);
+}
+
+export function saveAppointment(appointment) {
+    return saveOne("appointments", appointment);
+}
+
+export function updateAppointment(id, changes) {
+    return updateOne("appointments", id, changes);
+}
+
+export function deleteAppointment(id) {
+    return deleteOne("appointments", id);
+}
+
+import { auth } from "./firebase.js";
+
+const ENDPOINT = "/.netlify/functions/manage-appointments";
+
+async function sendAppointmentRequest(payload) {
+    const user = auth.currentUser;
+
+    if (!user) {
+        throw new Error("Debes iniciar sesión para gestionar citas.");
+    }
+
+    const token = await user.getIdToken();
+
+    const response = await fetch(ENDPOINT, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+    });
+
+    let result;
+
+    try {
+        result = await response.json();
+    } catch {
+        throw new Error("El servidor devolvió una respuesta inválida.");
+    }
+
+    if (!response.ok || !result.ok) {
+        throw new Error(
+            result.error || "No se pudo completar la operación."
+        );
+    }
+
+    return result;
+}
+
+export async function createAppointment(appointment) {
+    return sendAppointmentRequest({
+        action: "create",
+        appointment
+    });
+}
+
+export async function updateAppointment(id, appointment) {
+    return sendAppointmentRequest({
+        action: "update",
+        id,
+        appointment
+    });
+}
+
+export async function cancelAppointment(id) {
+    return sendAppointmentRequest({
+        action: "cancel",
+        id
+    });
+}
+
+export async function changeAppointmentStatus(id, status) {
+    return sendAppointmentRequest({
+        action: "status",
+        id,
+        status
+    });
+}
+
+import {
+    createAppointment,
+    updateAppointment
+} from "./appointment-booking.js";
+
+import {
+    normalizePhone,
+    getServices
+} from "./firestore-storage.js";
+
+import {
+    findBarberCustomerByPhone,
+    saveBarberCustomer
+} from "./barber-customers.js";
+
+import { auth, db } from "./firebase.js";
+
+import {
+    collection,
+    doc,
+    getDoc,
+    onSnapshot,
+    query,
+    where
+} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+/* =========================================================
+   EDUARDO'S BARBERSHOP
+   FORMULARIO DE CITAS DEL BARBERO
+
+   - Crear citas
+   - Modificar citas
+   - Cargar servicios asignados desde Firebase
+   - Consultar disponibilidad en tiempo real
+   - Ocultar horarios ocupados
+   - Respetar duración de servicios
+   - Buscar y registrar clientes mediante Netlify
+   - Evitar listeners duplicados
+========================================================= */
+
+const TIME_INTERVAL = 30;
+
+const BUSINESS_TIME_ZONE = "America/Mazatlan";
+
+const DAY_NAMES = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday"
+];
+
+const BLOCKING_STATUSES = new Set([
+    "pending",
+    "confirmed",
+    "completed"
+]);
+
+let activeCleanup = null;
+
+/* =========================================================
+   UTILIDADES
+========================================================= */
+
+function getElement(id) {
+    const element = document.getElementById(id);
+
+    if (!element) {
+        throw new Error(`Falta el elemento ${id}.`);
+    }
+
+    return element;
+}
+
+function minutesToTime(total) {
+    const hours = Math.floor(total / 60);
+    const minutes = total % 60;
+
+    return (
+        String(hours).padStart(2, "0") +
+        ":" +
+        String(minutes).padStart(2, "0")
+    );
+}
+
+function timeToMinutes(value) {
+    if (
+        typeof value !== "string" ||
+        !/^\d{2}:\d{2}$/.test(value)
+    ) {
+        return NaN;
+    }
+
+    const [hours, minutes] = value
+        .split(":")
+        .map(Number);
+
+    if (
+        hours < 0 ||
+        hours > 23 ||
+        minutes < 0 ||
+        minutes > 59
+    ) {
+        return NaN;
+    }
+
+    return hours * 60 + minutes;
+}
+
+function getBusinessDateTime() {
+    const parts = new Intl.DateTimeFormat(
+        "en-US",
+        {
+            timeZone: BUSINESS_TIME_ZONE,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23"
+        }
+    ).formatToParts(new Date());
+
+    const values = Object.fromEntries(
+        parts
+            .filter(part => part.type !== "literal")
+            .map(part => [
+                part.type,
+                part.value
+            ])
+    );
+
+    return {
+        date:
+            `${values.year}-` +
+            `${values.month}-` +
+            `${values.day}`,
+
+        time:
+            `${values.hour}:` +
+            `${values.minute}`
+    };
+}
+
+function getDayName(dateString) {
+    if (
+        typeof dateString !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(dateString)
+    ) {
+        return null;
+    }
+
+    const date = new Date(
+        `${dateString}T12:00:00Z`
+    );
+
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+
+    return DAY_NAMES[date.getUTCDay()];
+}
+
+function isValidPhone(value) {
+    const normalized = normalizePhone(value);
+
+    return (
+        normalized.length >= 7 &&
+        normalized.length <= 15
+    );
+}
+
+function isBlockingAppointment(appointment) {
+    return BLOCKING_STATUSES.has(
+        appointment.status || "pending"
+    );
+}
+
+function appointmentsOverlap(
+    firstStart,
+    firstEnd,
+    secondStart,
+    secondEnd
+) {
+    return (
+        firstStart < secondEnd &&
+        secondStart < firstEnd
+    );
+}
+
+/* =========================================================
+   INICIALIZAR FORMULARIO
+========================================================= */
+
+export function initializeBarberAppointmentForm(barber) {
+    if (!barber || !Array.isArray(barber.serviceIds)) {
+        throw new Error(
+            "No se pudieron cargar los servicios del barbero."
+        );
+    }
+
+    if (activeCleanup) {
+        activeCleanup();
+    }
+
+    /* =====================================================
+       ELEMENTOS
+    ===================================================== */
+
+    const form = getElement(
+        "barberAppointmentForm"
+    );
+
+    const appointmentId = getElement(
+        "barberAppointmentId"
+    );
+
+    const clientName = getElement(
+        "barberClientName"
+    );
+
+    const phone = getElement(
+        "barberClientPhone"
+    );
+
+    const serviceId = getElement(
+        "barberServiceId"
+    );
+
+    const date = getElement(
+        "barberAppointmentDate"
+    );
+
+    const time = getElement(
+        "barberAppointmentTime"
+    );
+
+    const origin = getElement(
+        "barberAppointmentOrigin"
+    );
+
+    const notes = getElement(
+        "barberAppointmentNotes"
+    );
+
+    const title = getElement(
+        "appointmentEditorTitle"
+    );
+
+    const saveButton = getElement(
+        "saveBarberAppointmentButton"
+    );
+
+    const resetButton = getElement(
+        "resetBarberAppointmentButton"
+    );
+
+    const message = getElement(
+        "barberAppointmentMessage"
+    );
+
+    const calendar = getElement(
+        "barberCalendar"
+    );
+
+    /* =====================================================
+       ESTADO
+    ===================================================== */
+
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    let services = [];
+
+    let servicesLoaded = false;
+
+    let appointments = [];
+
+    let appointmentsLoaded = false;
+    let appointmentsError = false;
+
+    let saving = false;
+    let disposed = false;
+
+    let customerLookupVersion = 0;
+
+    let unsubscribeAppointments = null;
+
+    let barberId = barber.id || null;
+
+    /* =====================================================
+       SERVICIOS
+    ===================================================== */
+
+    function getService(selectedServiceId) {
+        return services.find(
+            service =>
+                String(service.id) ===
+                String(selectedServiceId)
+        );
+    }
+
+    function getServiceDuration(selectedServiceId) {
+        const service = getService(selectedServiceId);
+
+        const duration = Number(service?.duration);
+
+        return (
+            Number.isFinite(duration) &&
+            duration > 0
+        )
+            ? duration
+            : 30;
+    }
+
+    function getAppointmentDuration(appointment) {
+        const explicitDuration = Number(
+            appointment.duration
+        );
+
+        if (
+            Number.isFinite(explicitDuration) &&
+            explicitDuration > 0
+        ) {
+            return explicitDuration;
+        }
+
+        return getServiceDuration(
+            appointment.serviceId
+        );
+    }
+
+    async function loadAssignedServices() {
+        serviceId.replaceChildren(
+            new Option("Cargando servicios...", "")
+        );
+
+        serviceId.disabled = true;
+        servicesLoaded = false;
+
+        try {
+            const firebaseServices = await getServices();
+
+            if (disposed) {
+                return;
+            }
+
+            const assignedIds = new Set(
+                barber.serviceIds.map(String)
+            );
+
+            services = (
+                Array.isArray(firebaseServices)
+                    ? firebaseServices
+                    : []
+            ).filter(
+                service =>
+                    service.status === "active" &&
+                    assignedIds.has(String(service.id))
+            );
+
+            servicesLoaded = true;
+
+            serviceId.replaceChildren(
+                new Option(
+                    "Selecciona un servicio",
+                    ""
+                )
+            );
+
+            services.forEach(service => {
+                const price = Number(service.price);
+                const duration = Number(service.duration);
+
+                const priceText = Number.isFinite(price)
+                    ? ` · $${price}`
+                    : "";
+
+                const durationText = (
+                    Number.isFinite(duration) &&
+                    duration > 0
+                )
+                    ? ` · ${duration} min`
+                    : "";
+
+                serviceId.add(
+                    new Option(
+                        `${service.name}${priceText}${durationText}`,
+                        service.id
+                    )
+                );
+            });
+
+            if (services.length === 0) {
+                serviceId.replaceChildren(
+                    new Option(
+                        "Sin servicios asignados",
+                        ""
+                    )
+                );
+
+                serviceId.disabled = true;
+
+                message.textContent =
+                    "No tienes servicios activos asignados. " +
+                    "Contacta al administrador.";
+
+                return;
+            }
+
+            serviceId.disabled = false;
+
+            renderTimes();
+
+        } catch (error) {
+            if (disposed) {
+                return;
+            }
+
+            console.error(
+                "Error cargando servicios:",
+                error
+            );
+
+            servicesLoaded = false;
+
+            serviceId.replaceChildren(
+                new Option(
+                    "No se pudieron cargar los servicios",
+                    ""
+                )
+            );
+
+            serviceId.disabled = true;
+
+            message.textContent =
+                "No se pudieron consultar los servicios de Firebase.";
+        }
+    }
+
+    /* =====================================================
+       CITAS QUE BLOQUEAN HORARIOS
+    ===================================================== */
+
+    function getOccupiedAppointments(selectedDate) {
+        return appointments.filter(
+            appointment =>
+                appointment.date === selectedDate &&
+                isBlockingAppointment(appointment) &&
+                appointment.id !== appointmentId.value
+        );
+    }
+
+    function isTimeAvailable(
+        start,
+        duration,
+        selectedDate
+    ) {
+        if (
+            !Number.isFinite(start) ||
+            !Number.isFinite(duration) ||
+            duration <= 0
+        ) {
+            return false;
+        }
+
+        const end = start + duration;
+
+        const occupiedAppointments =
+            getOccupiedAppointments(selectedDate);
+
+        return !occupiedAppointments.some(
+            appointment => {
+                const occupiedStart = timeToMinutes(
+                    appointment.time
+                );
+
+                if (!Number.isFinite(occupiedStart)) {
+                    return true;
+                }
+
+                const occupiedEnd =
+                    occupiedStart +
+                    getAppointmentDuration(appointment);
+
+                return appointmentsOverlap(
+                    start,
+                    end,
+                    occupiedStart,
+                    occupiedEnd
+                );
+            }
+        );
+    }
+
+    /* =====================================================
+       HORARIOS DISPONIBLES
+    ===================================================== */
+
+    function renderTimes() {
+        const previousTime = time.value;
+
+        time.replaceChildren(
+            new Option(
+                "Selecciona una hora",
+                ""
+            )
+        );
+
+        time.disabled = true;
+
+        if (!date.value || !serviceId.value) {
+            return;
+        }
+
+        if (!servicesLoaded) {
+            message.textContent =
+                "Cargando servicios...";
+
+            return;
+        }
+
+        if (!appointmentsLoaded) {
+            message.textContent = appointmentsError
+                ? "No se pudo consultar la disponibilidad."
+                : "Consultando horarios disponibles...";
+
+            return;
+        }
+
+        const dayName = getDayName(date.value);
+
+        const schedule = barber.schedule?.[dayName];
+
+        if (!schedule?.enabled) {
+            message.textContent =
+                "El barbero no trabaja ese día.";
+
+            return;
+        }
+
+        const selectedService = getService(
+            serviceId.value
+        );
+
+        if (!selectedService) {
+            message.textContent =
+                "El servicio seleccionado no está disponible.";
+
+            return;
+        }
+
+        const opening = timeToMinutes(
+            schedule.start
+        );
+
+        const closing = timeToMinutes(
+            schedule.end
+        );
+
+        if (
+            !Number.isFinite(opening) ||
+            !Number.isFinite(closing) ||
+            closing <= opening
+        ) {
+            message.textContent =
+                "El horario del barbero no es válido.";
+
+            return;
+        }
+
+        const now = getBusinessDateTime();
+
+        const selectedDate = date.value;
+
+        const editing = Boolean(
+            appointmentId.value
+        );
+
+        if (selectedDate < now.date) {
+            message.textContent =
+                "No se pueden agendar citas en fechas pasadas.";
+
+            return;
+        }
+
+        const currentMinutes = timeToMinutes(
+            now.time
+        );
+
+        const duration = Number(
+            selectedService.duration
+        );
+
+        if (
+            !Number.isFinite(duration) ||
+            duration <= 0
+        ) {
+            message.textContent =
+                "La duración del servicio no es válida.";
+
+            return;
+        }
+
+        let availableCount = 0;
+
+        for (
+            let start = opening;
+            start + duration <= closing;
+            start += TIME_INTERVAL
+        ) {
+            const value = minutesToTime(start);
+
+            if (
+                selectedDate === now.date &&
+                start <= currentMinutes
+            ) {
+                continue;
+            }
+
+            if (
+                !isTimeAvailable(
+                    start,
+                    duration,
+                    selectedDate
+                )
+            ) {
+                continue;
+            }
+
+            time.add(
+                new Option(value, value)
+            );
+
+            availableCount++;
+        }
+
+        time.disabled = availableCount === 0;
+
+        if (
+            previousTime &&
+            Array.from(time.options).some(
+                option =>
+                    option.value === previousTime
+            )
+        ) {
+            time.value = previousTime;
+        }
+
+        if (availableCount === 0) {
+            message.textContent = editing
+                ? "No hay otros horarios disponibles para esta cita."
+                : "No hay horarios disponibles para ese día.";
+
+        } else if (
+            message.textContent.includes(
+                "horarios disponibles"
+            ) ||
+            message.textContent.includes(
+                "Consultando horarios"
+            ) ||
+            message.textContent.includes(
+                "no trabaja ese día"
+            ) ||
+            message.textContent.includes(
+                "disponibilidad"
+            )
+        ) {
+            message.textContent = "";
+        }
+    }
+
+    /* =====================================================
+       ESCUCHAR CITAS EN TIEMPO REAL
+    ===================================================== */
+
+    function listenToAppointments(currentBarberId) {
+        if (
+            !currentBarberId ||
+            typeof currentBarberId !== "string"
+        ) {
+            appointmentsLoaded = false;
+            appointmentsError = true;
+
+            message.textContent =
+                "No se pudo identificar al barbero.";
+
+            return;
+        }
+
+        barberId = currentBarberId;
+
+        if (unsubscribeAppointments) {
+            unsubscribeAppointments();
+        }
+
+        appointmentsLoaded = false;
+        appointmentsError = false;
+
+        const appointmentsQuery = query(
+            collection(db, "appointments"),
+            where(
+                "barberId",
+                "==",
+                barberId
+            )
+        );
+
+        unsubscribeAppointments = onSnapshot(
+            appointmentsQuery,
+            snapshot => {
+                if (disposed) {
+                    return;
+                }
+
+                appointments = snapshot.docs.map(
+                    document => ({
+                        ...document.data(),
+                        id: document.id
+                    })
+                );
+
+                appointmentsLoaded = true;
+                appointmentsError = false;
+
+                renderTimes();
+            },
+            error => {
+                if (disposed) {
+                    return;
+                }
+
+                console.error(
+                    "Error consultando horarios:",
+                    error
+                );
+
+                appointmentsLoaded = false;
+                appointmentsError = true;
+
+                renderTimes();
+
+                message.textContent =
+                    "No se pudo consultar la disponibilidad de citas.";
+            }
+        );
+    }
+
+    /* =====================================================
+       IDENTIFICAR BARBERO
+    ===================================================== */
+
+    async function initializeAvailability() {
+        if (barberId) {
+            listenToAppointments(barberId);
+            return;
+        }
+
+        try {
+            await auth.authStateReady();
+
+            const user = auth.currentUser;
+
+            if (!user) {
+                throw new Error(
+                    "No hay una sesión activa."
+                );
+            }
+
+            const profileSnapshot = await getDoc(
+                doc(
+                    db,
+                    "users",
+                    user.uid
+                )
+            );
+
+            if (!profileSnapshot.exists()) {
+                throw new Error(
+                    "No se encontró el perfil del barbero."
+                );
+            }
+
+            const profile = profileSnapshot.data();
+
+            if (!profile.barberId) {
+                throw new Error(
+                    "El perfil no tiene un barbero asignado."
+                );
+            }
+
+            if (disposed) {
+                return;
+            }
+
+            listenToAppointments(
+                profile.barberId
+            );
+
+        } catch (error) {
+            if (disposed) {
+                return;
+            }
+
+            console.error(
+                "Error identificando al barbero:",
+                error
+            );
+
+            appointmentsLoaded = false;
+            appointmentsError = true;
+
+            message.textContent =
+                error.message ||
+                "No se pudo cargar la disponibilidad.";
+        }
+    }
+
+    /* =====================================================
+       BUSCAR CLIENTE
+    ===================================================== */
+
+    async function detectCustomer() {
+        const currentPhone = phone.value.trim();
+
+        const version = ++customerLookupVersion;
+
+        if (!isValidPhone(currentPhone)) {
+            if (!saving) {
+                message.textContent = "";
+            }
+
+            return;
+        }
+
+        if (!saving) {
+            message.textContent =
+                "Buscando cliente...";
+        }
+
+        try {
+            const customer =
+                await findBarberCustomerByPhone(
+                    currentPhone
+                );
+
+            if (
+                disposed ||
+                version !== customerLookupVersion ||
+                normalizePhone(phone.value) !==
+                    normalizePhone(currentPhone)
+            ) {
+                return;
+            }
+
+            if (saving) {
+                return;
+            }
+
+            if (customer) {
+                if (!clientName.value.trim()) {
+                    clientName.value =
+                        customer.name || "";
+                }
+
+                message.textContent =
+                    `Cliente registrado: ${customer.name || "Sin nombre"}. ` +
+                    `${Number(customer.visits) || 0} visitas.`;
+
+            } else {
+                message.textContent =
+                    "Cliente nuevo. Se registrará al guardar la cita.";
+            }
+
+        } catch (error) {
+            console.error(
+                "Error buscando cliente:",
+                error
+            );
+
+            if (
+                !disposed &&
+                version === customerLookupVersion &&
+                !saving
+            ) {
+                message.textContent =
+                    error.message ||
+                    "No se pudo consultar el cliente.";
+            }
+        }
+    }
+
+    /* =====================================================
+       REINICIAR FORMULARIO
+    ===================================================== */
+
+    function resetForm() {
+        ++customerLookupVersion;
+
+        form.reset();
+
+        appointmentId.value = "";
+
+        const now = getBusinessDateTime();
+
+        date.min = now.date;
+        date.value = now.date;
+
+        title.textContent =
+            "Agendar cita";
+
+        saveButton.textContent =
+            "Guardar cita";
+
+        message.textContent = "";
+
+        renderTimes();
+    }
+
+    /* =====================================================
+       EDITAR CITA
+    ===================================================== */
+
+    function handleEditAppointment(event) {
+        const appointment =
+            event.detail?.appointment;
+
+        if (!appointment?.id) {
+            return;
+        }
+
+        ++customerLookupVersion;
+
+        appointmentId.value =
+            appointment.id;
+
+        clientName.value =
+            appointment.clientName || "";
+
+        phone.value =
+            appointment.phone || "";
+
+        serviceId.value =
+            appointment.serviceId || "";
+
+        date.value =
+            appointment.date || "";
+
+        origin.value =
+            appointment.origin || "phone";
+
+        notes.value =
+            appointment.notes || "";
+
+        date.min = "";
+
+        renderTimes();
+
+        const originalTime =
+            appointment.time || "";
+
+        const originalTimeAvailable =
+            Array.from(time.options).some(
+                option =>
+                    option.value === originalTime
+            );
+
+        time.value = originalTimeAvailable
+            ? originalTime
+            : "";
+
+        title.textContent =
+            "Modificar cita";
+
+        saveButton.textContent =
+            "Guardar cambios";
+
+        if (
+            appointmentsLoaded &&
+            !time.value
+        ) {
+            message.textContent =
+                "Selecciona un horario disponible para modificar esta cita.";
+
+        } else {
+            message.textContent = "";
+        }
+
+        form.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+        });
+    }
+
+    /* =====================================================
+       GUARDAR CITA
+    ===================================================== */
+
+    async function handleSubmit(event) {
+        event.preventDefault();
+
+        if (saving) {
+            return;
+        }
+
+        if (!form.reportValidity()) {
+            return;
+        }
+
+        if (!servicesLoaded) {
+            message.textContent =
+                "Espera a que se carguen los servicios.";
+
+            return;
+        }
+
+        if (!appointmentsLoaded) {
+            message.textContent =
+                "Espera a que se carguen los horarios disponibles.";
+
+            return;
+        }
+
+        const nameValue =
+            clientName.value.trim();
+
+        const phoneValue =
+            phone.value.trim();
+
+        const editingId =
+            appointmentId.value.trim();
+
+        if (!nameValue) {
+            message.textContent =
+                "Ingresa el nombre del cliente.";
+
+            clientName.focus();
+
+            return;
+        }
+
+        if (phoneValue && !isValidPhone(phoneValue)) {
+            message.textContent =
+                "El teléfono ingresado no es válido.";
+
+            phone.focus();
+
+            return;
+        }
+
+        if (
+            !serviceId.value ||
+            !date.value ||
+            !time.value
+        ) {
+            message.textContent =
+                "Selecciona servicio, fecha y hora.";
+
+            return;
+        }
+
+        const selectedService = getService(
+            serviceId.value
+        );
+
+        if (!selectedService) {
+            message.textContent =
+                "El servicio seleccionado no es válido.";
+
+            return;
+        }
+
+        const selectedStart = timeToMinutes(
+            time.value
+        );
+
+        if (
+            !isTimeAvailable(
+                selectedStart,
+                Number(selectedService.duration),
+                date.value
+            )
+        ) {
+            message.textContent =
+                "Ese horario acaba de ocuparse. Selecciona otro.";
+
+            renderTimes();
+
+            return;
+        }
+
+        const appointment = {
+            clientName: nameValue,
+            phone: phoneValue,
+            serviceId: serviceId.value,
+            date: date.value,
+            time: time.value,
+            origin: origin.value,
+            notes: notes.value.trim()
+        };
+
+        ++customerLookupVersion;
+
+        saving = true;
+
+        saveButton.disabled = true;
+        resetButton.disabled = true;
+
+        message.textContent = editingId
+            ? "Guardando cambios..."
+            : "Guardando cita...";
+
+        let appointmentSaved = false;
+
+        try {
+            if (editingId) {
+                await updateAppointment(
+                    editingId,
+                    appointment
+                );
+            } else {
+                await createAppointment(
+                    appointment
+                );
+            }
+
+            appointmentSaved = true;
+
+            if (phoneValue) {
+                message.textContent =
+                    "Cita guardada. Registrando cliente...";
+
+                await saveBarberCustomer(
+                    nameValue,
+                    phoneValue
+                );
+            }
+
+            resetForm();
+
+            message.textContent = editingId
+                ? (
+                    phoneValue
+                        ? "Cita modificada y cliente registrado correctamente."
+                        : "Cita modificada correctamente."
+                )
+                : (
+                    phoneValue
+                        ? "Cita y cliente guardados correctamente."
+                        : "Cita guardada correctamente."
+                );
+
+        } catch (error) {
+            console.error(
+                "Error guardando cita:",
+                error
+            );
+
+            if (appointmentSaved) {
+                resetForm();
+
+                message.textContent =
+                    "La cita se guardó correctamente, pero no se pudo registrar el cliente. " +
+                    (error.message || "");
+
+            } else {
+                message.textContent =
+                    error.message ||
+                    "No se pudo guardar la cita.";
+
+                renderTimes();
+            }
+
+        } finally {
+            saving = false;
+
+            saveButton.disabled = false;
+            resetButton.disabled = false;
+        }
+    }
+
+    /* =====================================================
+       EVENTOS
+    ===================================================== */
+
+    date.addEventListener(
+        "change",
+        renderTimes,
+        { signal }
+    );
+
+    serviceId.addEventListener(
+        "change",
+        renderTimes,
+        { signal }
+    );
+
+    phone.addEventListener(
+        "blur",
+        detectCustomer,
+        { signal }
+    );
+
+    resetButton.addEventListener(
+        "click",
+        resetForm,
+        { signal }
+    );
+
+    calendar.addEventListener(
+        "appointment:edit",
+        handleEditAppointment,
+        { signal }
+    );
+
+    form.addEventListener(
+        "submit",
+        handleSubmit,
+        { signal }
+    );
+
+    /* =====================================================
+       LIMPIEZA
+    ===================================================== */
+
+    function cleanup() {
+        if (disposed) {
+            return;
+        }
+
+        disposed = true;
+
+        ++customerLookupVersion;
+
+        controller.abort();
+
+        if (unsubscribeAppointments) {
+            unsubscribeAppointments();
+            unsubscribeAppointments = null;
+        }
+
+        if (activeCleanup === cleanup) {
+            activeCleanup = null;
+        }
+    }
+
+    activeCleanup = cleanup;
+
+    resetForm();
+
+    loadAssignedServices();
+
+    initializeAvailability();
+
+    return cleanup;
+}
+
+import {
+    initializeApp,
+    cert,
+    getApps
+} from "firebase-admin/app";
+
+import {
+    getAuth
+} from "firebase-admin/auth";
+
+import {
+    getFirestore,
+    FieldValue
+} from "firebase-admin/firestore";
+
+/* =====================================================
+   CONFIGURACIÓN
+===================================================== */
+
+const ADMIN_UIDS = new Set([
+    "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2",
+    "KcHcm82nZESqoHy7RrHZdyj1y2p2"
+]);
+
+const BUSINESS_TIME_ZONE = "America/Mazatlan";
+
+const SLOT_MINUTES = 15;
+const START_INTERVAL_MINUTES = 30;
+
+const DAYS = [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday"
+];
+
+const VALID_ORIGINS = new Set([
+    "whatsapp",
+    "instagram",
+    "facebook",
+    "phone",
+    "walk-in"
+]);
+
+const NON_BLOCKING_STATUSES = new Set([
+    "cancelled",
+    "no-show"
+]);
+
+/* =====================================================
+   FIREBASE ADMIN
+===================================================== */
+
+function getFirebase() {
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+
+    const privateKey = (
+        process.env.FIREBASE_PRIVATE_KEY || ""
+    )
+        .trim()
+        .replace(/^["']|["']$/g, "")
+        .replace(/\\n/g, "\n")
+        .trim();
+
+    if (!projectId || !clientEmail || !privateKey) {
+        throw new Error(
+            "Falta la configuración privada de Firebase."
+        );
+    }
+
+    const app = getApps()[0] || initializeApp({
+        credential: cert({
+            projectId,
+            clientEmail,
+            privateKey
+        })
+    });
+
+    return {
+        auth: getAuth(app),
+        db: getFirestore(app)
+    };
+}
+
+/* =====================================================
+   RESPUESTAS Y ERRORES
+===================================================== */
+
+class AppError extends Error {
+    constructor(status, message) {
+        super(message);
+        this.name = "AppError";
+        this.status = status;
+    }
+}
+
+function json(status, data) {
+    return new Response(
+        JSON.stringify(data),
+        {
+            status,
+            headers: {
+                "Content-Type": "application/json",
+                "Cache-Control": "no-store",
+                "Allow": "POST"
+            }
+        }
+    );
+}
+
+/* =====================================================
+   VALIDACIONES BÁSICAS
+===================================================== */
+
+function validId(value) {
+    return (
+        typeof value === "string" &&
+        value.length > 0 &&
+        value.length <= 150 &&
+        value !== "." &&
+        value !== ".." &&
+        !value.includes("/")
+    );
+}
+
+function requireValidId(value, label) {
+    if (!validId(value)) {
+        throw new AppError(
+            400,
+            `${label} inválido.`
+        );
+    }
+
+    return value;
+}
+
+function requireText(value, label, maxLength) {
+    if (typeof value !== "string") {
+        throw new AppError(
+            400,
+            `${label} inválido.`
+        );
+    }
+
+    const normalized = value.trim();
+
+    if (
+        normalized.length === 0 ||
+        normalized.length > maxLength
+    ) {
+        throw new AppError(
+            400,
+            `${label} debe contener entre 1 y ${maxLength} caracteres.`
+        );
+    }
+
+    return normalized;
+}
+
+function optionalText(value, label, maxLength) {
+    if (value === undefined || value === null) {
+        return "";
+    }
+
+    if (typeof value !== "string") {
+        throw new AppError(
+            400,
+            `${label} inválido.`
+        );
+    }
+
+    const normalized = value.trim();
+
+    if (normalized.length > maxLength) {
+        throw new AppError(
+            400,
+            `${label} supera el máximo de ${maxLength} caracteres.`
+        );
+    }
+
+    return normalized;
+}
+
+/* =====================================================
+   FECHAS Y HORAS
+===================================================== */
+
+function minutes(time) {
+    if (
+        typeof time !== "string" ||
+        !/^\d{2}:\d{2}$/.test(time)
+    ) {
+        throw new AppError(
+            400,
+            "El formato de hora debe ser HH:MM."
+        );
+    }
+
+    const [hour, minute] = time
+        .split(":")
+        .map(Number);
+
+    if (
+        hour < 0 ||
+        hour > 23 ||
+        minute < 0 ||
+        minute > 59
+    ) {
+        throw new AppError(
+            400,
+            "La hora no es válida."
+        );
+    }
+
+    return hour * 60 + minute;
+}
+
+function timeString(value) {
+    const hour = Math.floor(value / 60);
+    const minute = value % 60;
+
+    return (
+        String(hour).padStart(2, "0") +
+        ":" +
+        String(minute).padStart(2, "0")
+    );
+}
+
+function parseDate(date) {
+    if (
+        typeof date !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(date)
+    ) {
+        throw new AppError(
+            400,
+            "La fecha debe tener el formato AAAA-MM-DD."
+        );
+    }
+
+    const parsed = new Date(`${date}T12:00:00Z`);
+
+    if (
+        !Number.isFinite(parsed.getTime()) ||
+        parsed.toISOString().slice(0, 10) !== date
+    ) {
+        throw new AppError(
+            400,
+            "La fecha no es válida."
+        );
+    }
+
+    return parsed;
+}
+
+function getBusinessDateTime() {
+    const formatter = new Intl.DateTimeFormat(
+        "en-US",
+        {
+            timeZone: BUSINESS_TIME_ZONE,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit",
+            hour: "2-digit",
+            minute: "2-digit",
+            hourCycle: "h23"
+        }
+    );
+
+    const parts = formatter.formatToParts(
+        new Date()
+    );
+
+    const values = Object.fromEntries(
+        parts
+            .filter(part => part.type !== "literal")
+            .map(part => [
+                part.type,
+                part.value
+            ])
+    );
+
+    return {
+        date: (
+            `${values.year}-` +
+            `${values.month}-` +
+            `${values.day}`
+        ),
+        time: (
+            `${values.hour}:` +
+            `${values.minute}`
+        )
+    };
+}
+
+function validateFutureAppointment(appointment) {
+    const now = getBusinessDateTime();
+
+    parseDate(appointment.date);
+
+    if (appointment.date < now.date) {
+        throw new AppError(
+            400,
+            "No puedes agendar una cita en una fecha pasada."
+        );
+    }
+
+    const start = minutes(appointment.time);
+
+    if (
+        appointment.date === now.date &&
+        start <= minutes(now.time)
+    ) {
+        throw new AppError(
+            400,
+            "Selecciona una hora posterior a la actual."
+        );
+    }
+
+    if (start % START_INTERVAL_MINUTES !== 0) {
+        throw new AppError(
+            400,
+            "Las citas deben comenzar cada 30 minutos."
+        );
+    }
+
+    if (
+        start + appointment.duration >
+        24 * 60
+    ) {
+        throw new AppError(
+            400,
+            "La cita no puede terminar al día siguiente."
+        );
+    }
+}
+
+/* =====================================================
+   BLOQUES DE RESERVA
+===================================================== */
+
+function slotsFor(date, time, duration) {
+    parseDate(date);
+
+    const start = minutes(time);
+
+    if (
+        !Number.isInteger(duration) ||
+        duration <= 0 ||
+        duration > 480
+    ) {
+        throw new AppError(
+            400,
+            "La duración del servicio no es válida."
+        );
+    }
+
+    if (start + duration > 24 * 60) {
+        throw new AppError(
+            400,
+            "La cita termina fuera del día seleccionado."
+        );
+    }
+
+    const firstSlot =
+        Math.floor(start / SLOT_MINUTES) *
+        SLOT_MINUTES;
+
+    const end = start + duration;
+    const slots = [];
+
+    for (
+        let minute = firstSlot;
+        minute < end;
+        minute += SLOT_MINUTES
+    ) {
+        slots.push(
+            `${date}_${timeString(minute)}`
+        );
+    }
+
+    return slots;
+}
+
+function reservationRef(db, barberId, slot) {
+    requireValidId(barberId, "Barbero");
+
+    if (
+        typeof slot !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}_\d{2}:\d{2}$/.test(slot)
+    ) {
+        throw new AppError(
+            409,
+            "Se encontró un bloque de reserva inválido."
+        );
+    }
+
+    return db
+        .collection("appointmentReservations")
+        .doc(`${barberId}_${slot}`);
+}
+
+function getExistingSlots(appointment) {
+    if (Array.isArray(appointment.occupiedSlots)) {
+        const slots = appointment.occupiedSlots;
+
+       if (
+    slots.some(slot =>
+        typeof slot !== "string" ||
+        !/^\d{4}-\d{2}-\d{2}_\d{2}:\d{2}$/.test(slot)
+    ) ||
+    new Set(slots).size !== slots.length
+) {
+    throw new AppError(
+        409,
+        "La cita contiene reservas inconsistentes."
+    );
+}
+
+        return slots;
+    }
+
+    return null;
+}
+
+/* =====================================================
+   IDENTIDAD Y PERMISOS
+===================================================== */
+
+async function getIdentity(request, auth, db) {
+    const header =
+        request.headers.get("authorization") || "";
+
+    const match = /^Bearer\s+(.+)$/i.exec(header);
+
+    if (!match) {
+        throw new AppError(
+            401,
+            "Debes iniciar sesión."
+        );
+    }
+
+    let decoded;
+
+    try {
+        decoded = await auth.verifyIdToken(
+            match[1],
+            true
+        );
+    } catch {
+        throw new AppError(
+            401,
+            "Tu sesión no es válida. Inicia sesión nuevamente."
+        );
+    }
+
+    // Ambos administradores están autorizados.
+    if (ADMIN_UIDS.has(decoded.uid)) {
+        return {
+            uid: decoded.uid,
+            role: "admin"
+        };
+    }
+
+    // Comprobar acceso de barberos.
+    const profileSnap = await db
+        .collection("users")
+        .doc(decoded.uid)
+        .get();
+
+    if (!profileSnap.exists) {
+        throw new AppError(
+            403,
+            "Usuario no autorizado."
+        );
+    }
+
+    const profile = profileSnap.data();
+
+    if (
+        profile.role !== "barber" ||
+        profile.active !== true ||
+        !validId(profile.barberId)
+    ) {
+        throw new AppError(
+            403,
+            "La cuenta de barbero está inactiva."
+        );
+    }
+
+    const barberSnap = await db
+        .collection("barbers")
+        .doc(profile.barberId)
+        .get();
+
+    if (
+        !barberSnap.exists ||
+        barberSnap.data().status !== "active"
+    ) {
+        throw new AppError(
+            403,
+            "El barbero no está activo."
+        );
+    }
+
+    return {
+        uid: decoded.uid,
+        role: "barber",
+        barberId: profile.barberId
+    };
+}
+
+function assertCanManage(identity, appointment) {
+    if (
+        identity.role !== "admin" &&
+        appointment.barberId !== identity.barberId
+    ) {
+        throw new AppError(
+            403,
+            "No tienes permiso para gestionar esta cita."
+        );
+    }
+}
+
+/* =====================================================
+   DATOS DE LA CITA
+===================================================== */
+
+function normalizeAppointment(input, identity, service) {
+    if (
+        !input ||
+        typeof input !== "object" ||
+        Array.isArray(input)
+    ) {
+        throw new AppError(
+            400,
+            "Los datos de la cita no son válidos."
+        );
+    }
+
+    const barberId =
+        identity.role === "admin"
+            ? input.barberId
+            : identity.barberId;
+
+    requireValidId(barberId, "Barbero");
+
+    const clientName = requireText(
+        input.clientName,
+        "Nombre del cliente",
+        120
+    );
+
+    const phone = optionalText(
+        input.phone,
+        "Teléfono",
+        40
+    );
+
+    const notes = optionalText(
+        input.notes,
+        "Notas",
+        1000
+    );
+
+    const origin = input.origin ?? "phone";
+
+    if (!VALID_ORIGINS.has(origin)) {
+        throw new AppError(
+            400,
+            "El origen de la cita no es válido."
+        );
+    }
+
+    const serviceId = input.serviceId;
+
+    requireValidId(serviceId, "Servicio");
+
+    if (
+        !service ||
+        service.status !== "active"
+    ) {
+        throw new AppError(
+            400,
+            "El servicio no existe o está inactivo."
+        );
+    }
+
+    const duration = Number(service.duration);
+
+    if (
+        !Number.isInteger(duration) ||
+        duration < 5 ||
+        duration > 480
+    ) {
+        throw new AppError(
+            400,
+            "La duración del servicio no es válida."
+        );
+    }
+
+    const date = input.date;
+    const time = input.time;
+
+    parseDate(date);
+    minutes(time);
+
+    return {
+        barberId,
+        clientName,
+        phone,
+        notes,
+        origin,
+        serviceId,
+        date,
+        time,
+        duration
+    };
+}
+
+/* =====================================================
+   HORARIO Y SERVICIOS DEL BARBERO
+===================================================== */
+
+function validateSchedule(barber, appointment) {
+    if (
+        !barber ||
+        barber.status !== "active"
+    ) {
+        throw new AppError(
+            400,
+            "El barbero está inactivo."
+        );
+    }
+
+    if (
+        !Array.isArray(barber.serviceIds) ||
+        !barber.serviceIds.includes(
+            appointment.serviceId
+        )
+    ) {
+        throw new AppError(
+            400,
+            "El barbero no tiene asignado ese servicio."
+        );
+    }
+
+    const date = parseDate(
+        appointment.date
+    );
+
+    const day = DAYS[
+        date.getUTCDay()
+    ];
+
+    const schedule = barber.schedule?.[day];
+
+    if (
+        !schedule ||
+        schedule.enabled !== true
+    ) {
+        throw new AppError(
+            400,
+            "El barbero no trabaja ese día."
+        );
+    }
+
+    const start = minutes(
+        appointment.time
+    );
+
+    const opening = minutes(
+        schedule.start
+    );
+
+    const closing = minutes(
+        schedule.end
+    );
+
+    if (
+        closing <= opening ||
+        start < opening ||
+        start + appointment.duration > closing
+    ) {
+        throw new AppError(
+            400,
+            "La cita está fuera del horario de trabajo."
+        );
+    }
+}
+
+/* =====================================================
+   CREAR CITA
+===================================================== */
+
+async function createAppointment(
+    db,
+    identity,
+    input
+) {
+    if (
+        !input ||
+        typeof input !== "object" ||
+        Array.isArray(input)
+    ) {
+        throw new AppError(
+            400,
+            "Los datos de la cita no son válidos."
+        );
+    }
+
+    const serviceId = requireValidId(
+        input.serviceId,
+        "Servicio"
+    );
+
+    const serviceSnap = await db
+        .collection("services")
+        .doc(serviceId)
+        .get();
+
+    const appointment = normalizeAppointment(
+        input,
+        identity,
+        serviceSnap.exists ? serviceSnap.data() : null
+    );
+
+    validateFutureAppointment(appointment);
+
+    const appointmentRef = db
+        .collection("appointments")
+        .doc();
+
+    const barberRef = db
+        .collection("barbers")
+        .doc(appointment.barberId);
+
+    const slots = slotsFor(
+        appointment.date,
+        appointment.time,
+        appointment.duration
+    );
+
+    const slotRefs = slots.map(slot =>
+        reservationRef(
+            db,
+            appointment.barberId,
+            slot
+        )
+    );
+
+    await db.runTransaction(async transaction => {
+        const [
+            barberSnap,
+            ...reservationSnaps
+        ] = await Promise.all([
+            transaction.get(barberRef),
+            ...slotRefs.map(ref =>
+                transaction.get(ref)
+            )
+        ]);
+
+        if (!barberSnap.exists) {
+            throw new AppError(
+                404,
+                "El barbero no existe."
+            );
+        }
+
+        validateSchedule(
+            barberSnap.data(),
+            appointment
+        );
+
+        validateFutureAppointment(appointment);
+
+        if (
+            reservationSnaps.some(
+                snapshot => snapshot.exists
+            )
+        ) {
+            throw new AppError(
+                409,
+                "Ese horario ya está ocupado."
+            );
+        }
+
+        transaction.create(
+            appointmentRef,
+            {
+                ...appointment,
+                id: appointmentRef.id,
+                status: "pending",
+                occupiedSlots: slots,
+                createdBy: identity.uid,
+                createdAt:
+                    FieldValue.serverTimestamp(),
+                updatedAt:
+                    FieldValue.serverTimestamp()
+            }
+        );
+
+        slotRefs.forEach((ref, index) => {
+            transaction.create(
+                ref,
+                {
+                    appointmentId:
+                        appointmentRef.id,
+                    barberId:
+                        appointment.barberId,
+                    slot: slots[index],
+                    createdAt:
+                        FieldValue.serverTimestamp()
+                }
+            );
+        });
+    });
+
+    return {
+        id: appointmentRef.id
+    };
+}
+
+/* =====================================================
+   MODIFICAR CITA
+===================================================== */
+
+async function updateAppointment(
+    db,
+    identity,
+    id,
+    input
+) {
+    requireValidId(id, "ID de cita");
+
+    if (
+        !input ||
+        typeof input !== "object" ||
+        Array.isArray(input)
+    ) {
+        throw new AppError(
+            400,
+            "Los cambios de la cita no son válidos."
+        );
+    }
+
+    const appointmentRef = db
+        .collection("appointments")
+        .doc(id);
+
+    await db.runTransaction(async transaction => {
+        const oldSnap = await transaction.get(
+            appointmentRef
+        );
+
+        if (!oldSnap.exists) {
+            throw new AppError(
+                404,
+                "La cita no existe."
+            );
+        }
+
+        const old = oldSnap.data();
+
+        assertCanManage(
+            identity,
+            old
+        );
+
+        if (
+            NON_BLOCKING_STATUSES.has(old.status)
+        ) {
+            throw new AppError(
+                400,
+                "No puedes modificar una cita cancelada o marcada como no asistida."
+            );
+        }
+
+        const oldSlots = getExistingSlots(old);
+
+        if (oldSlots === null) {
+            throw new AppError(
+                409,
+                "Esta cita es anterior al sistema de reservas. Debe revisarse antes de modificarla."
+            );
+        }
+
+        const nextInput = {
+            ...old,
+            ...input,
+            barberId:
+                identity.role === "admin"
+                    ? (
+                        input.barberId ??
+                        old.barberId
+                    )
+                    : identity.barberId
+        };
+
+        const nextServiceId = requireValidId(
+            nextInput.serviceId,
+            "Servicio"
+        );
+
+        const serviceRef = db
+            .collection("services")
+            .doc(nextServiceId);
+
+        const serviceSnap =
+            await transaction.get(serviceRef);
+
+        const next = normalizeAppointment(
+            nextInput,
+            identity,
+            serviceSnap.exists
+                ? serviceSnap.data()
+                : null
+        );
+
+        validateFutureAppointment(next);
+
+        const newSlots = slotsFor(
+            next.date,
+            next.time,
+            next.duration
+        );
+
+        const oldRefs = oldSlots.map(slot =>
+            reservationRef(
+                db,
+                old.barberId,
+                slot
+            )
+        );
+
+        const newRefs = newSlots.map(slot =>
+            reservationRef(
+                db,
+                next.barberId,
+                slot
+            )
+        );
+
+        const barberRef = db
+            .collection("barbers")
+            .doc(next.barberId);
+
+        const refsByPath = new Map();
+
+        for (const ref of [...oldRefs, ...newRefs]) {
+            refsByPath.set(
+                ref.path,
+                ref
+            );
+        }
+
+        const refsToRead = Array.from(
+            refsByPath.values()
+        );
+
+        const [
+            barberSnap,
+            ...reservationSnaps
+        ] = await Promise.all([
+            transaction.get(barberRef),
+            ...refsToRead.map(ref =>
+                transaction.get(ref)
+            )
+        ]);
+
+        if (!barberSnap.exists) {
+            throw new AppError(
+                404,
+                "El barbero no existe."
+            );
+        }
+
+        validateSchedule(
+            barberSnap.data(),
+            next
+        );
+
+        const reservationsByPath = new Map(
+            refsToRead.map(
+                (ref, index) => [
+                    ref.path,
+                    reservationSnaps[index]
+                ]
+            )
+        );
+
+        for (const ref of oldRefs) {
+            const snapshot =
+                reservationsByPath.get(ref.path);
+
+            if (
+                !snapshot?.exists ||
+                snapshot.data().appointmentId !== id
+            ) {
+                throw new AppError(
+                    409,
+                    "Las reservas actuales de esta cita están incompletas o pertenecen a otra cita."
+                );
+            }
+        }
+
+        for (const ref of newRefs) {
+            const snapshot =
+                reservationsByPath.get(ref.path);
+
+            if (
+                snapshot?.exists &&
+                snapshot.data().appointmentId !== id
+            ) {
+                throw new AppError(
+                    409,
+                    "El nuevo horario está ocupado."
+                );
+            }
+        }
+
+        const oldPaths = new Set(
+            oldRefs.map(ref => ref.path)
+        );
+
+        const newPaths = new Set(
+            newRefs.map(ref => ref.path)
+        );
+
+        for (const ref of oldRefs) {
+            if (!newPaths.has(ref.path)) {
+                transaction.delete(ref);
+            }
+        }
+
+        newRefs.forEach((ref, index) => {
+            if (!oldPaths.has(ref.path)) {
+                transaction.create(
+                    ref,
+                    {
+                        appointmentId: id,
+                        barberId:
+                            next.barberId,
+                        slot:
+                            newSlots[index],
+                        createdAt:
+                            FieldValue.serverTimestamp()
+                    }
+                );
+            }
+        });
+
+        transaction.update(
+            appointmentRef,
+            {
+                ...next,
+                occupiedSlots: newSlots,
+                updatedAt:
+                    FieldValue.serverTimestamp()
+            }
+        );
+    });
+
+    return {
+        id
+    };
+}
+
+/* =====================================================
+   CANCELAR CITA
+===================================================== */
+
+async function cancelAppointment(
+    db,
+    identity,
+    id
+) {
+    requireValidId(
+        id,
+        "ID de cita"
+    );
+
+    const appointmentRef = db
+        .collection("appointments")
+        .doc(id);
+
+    await db.runTransaction(async transaction => {
+        const appointmentSnap =
+            await transaction.get(
+                appointmentRef
+            );
+
+        if (!appointmentSnap.exists) {
+            throw new AppError(
+                404,
+                "La cita no existe."
+            );
+        }
+
+        const appointment =
+            appointmentSnap.data();
+
+        assertCanManage(
+            identity,
+            appointment
+        );
+
+        if (
+            appointment.status === "cancelled"
+        ) {
+            return;
+        }
+
+        const oldSlots =
+            getExistingSlots(
+                appointment
+            );
+
+        if (oldSlots === null) {
+            transaction.update(
+                appointmentRef,
+                {
+                    status: "cancelled",
+                    occupiedSlots: [],
+                    updatedAt:
+                        FieldValue.serverTimestamp()
+                }
+            );
+
+            return;
+        }
+
+        const refs = oldSlots.map(slot =>
+            reservationRef(
+                db,
+                appointment.barberId,
+                slot
+            )
+        );
+
+        const snapshots = await Promise.all(
+            refs.map(ref =>
+                transaction.get(ref)
+            )
+        );
+
+        for (const snapshot of snapshots) {
+            if (
+                !snapshot.exists ||
+                snapshot.data().appointmentId !== id
+            ) {
+                throw new AppError(
+                    409,
+                    "Las reservas de esta cita son inconsistentes. No se canceló."
+                );
+            }
+        }
+
+        refs.forEach(ref => {
+            transaction.delete(ref);
+        });
+
+        transaction.update(
+            appointmentRef,
+            {
+                status: "cancelled",
+                occupiedSlots: [],
+                updatedAt:
+                    FieldValue.serverTimestamp()
+            }
+        );
+    });
+
+    return {
+        id
+    };
+}
+
+/* =====================================================
+   CAMBIAR ESTADO
+===================================================== */
+
+async function changeAppointmentStatus(
+    db,
+    identity,
+    id,
+    newStatus
+) {
+    requireValidId(id, "ID de cita");
+
+    if (identity.role !== "admin") {
+        throw new AppError(
+            403,
+            "Solo el administrador puede cambiar el estado de una cita."
+        );
+    }
+
+    const allowedStatuses = new Set([
+        "pending",
+        "confirmed",
+        "completed",
+        "no-show"
+    ]);
+
+    if (!allowedStatuses.has(newStatus)) {
+        throw new AppError(
+            400,
+            "Estado de cita inválido."
+        );
+    }
+
+    const appointmentRef = db
+        .collection("appointments")
+        .doc(id);
+
+    await db.runTransaction(async transaction => {
+        const appointmentSnap =
+            await transaction.get(appointmentRef);
+
+        if (!appointmentSnap.exists) {
+            throw new AppError(
+                404,
+                "La cita no existe."
+            );
+        }
+
+        const appointment = appointmentSnap.data();
+        const previousStatus = appointment.status;
+
+        if (previousStatus === newStatus) {
+            return;
+        }
+
+        if (previousStatus === "completed") {
+            throw new AppError(
+                400,
+                "Una cita completada no puede cambiar de estado."
+            );
+        }
+
+        if (newStatus === "pending") {
+            throw new AppError(
+                400,
+                "La restauración requiere reservar nuevamente el horario."
+            );
+        }
+
+        if (
+            previousStatus === "cancelled" ||
+            previousStatus === "no-show"
+        ) {
+            throw new AppError(
+                400,
+                "Esta cita no puede cambiar de estado sin restaurar su reserva."
+            );
+        }
+
+        if (
+            newStatus === "confirmed" &&
+            previousStatus !== "pending"
+        ) {
+            throw new AppError(
+                400,
+                "Solo puedes confirmar citas pendientes."
+            );
+        }
+
+        if (
+            (
+                newStatus === "completed" ||
+                newStatus === "no-show"
+            ) &&
+            previousStatus !== "confirmed"
+        ) {
+            throw new AppError(
+                400,
+                "Primero debes confirmar la cita."
+            );
+        }
+
+        const slots = getExistingSlots(appointment);
+
+        if (slots === null) {
+            throw new AppError(
+                409,
+                "Esta cita antigua requiere revisión antes de cambiar su estado."
+            );
+        }
+
+        const refs = slots.map(slot =>
+            reservationRef(
+                db,
+                appointment.barberId,
+                slot
+            )
+        );
+
+        const snapshots = await Promise.all(
+            refs.map(ref =>
+                transaction.get(ref)
+            )
+        );
+
+        for (const snapshot of snapshots) {
+            if (
+                !snapshot.exists ||
+                snapshot.data().appointmentId !== id
+            ) {
+                throw new AppError(
+                    409,
+                    "Las reservas de esta cita son inconsistentes."
+                );
+            }
+        }
+
+        if (newStatus === "no-show") {
+            refs.forEach(ref => {
+                transaction.delete(ref);
+            });
+        }
+
+        transaction.update(
+            appointmentRef,
+            {
+                status: newStatus,
+                ...(
+                    newStatus === "no-show"
+                        ? { occupiedSlots: [] }
+                        : {}
+                ),
+                updatedAt:
+                    FieldValue.serverTimestamp()
+            }
+        );
+    });
+
+    return {
+        id,
+        status: newStatus
+    };
+}
+
+/* =====================================================
+   FUNCIÓN NETLIFY
+===================================================== */
+
+export default async function handler(request) {
+    if (request.method !== "POST") {
+        return json(
+            405,
+            {
+                ok: false,
+                error: "Método no permitido."
+            }
+        );
+    }
+
+    try {
+        const {
+            auth,
+            db
+        } = getFirebase();
+
+        const identity = await getIdentity(
+            request,
+            auth,
+            db
+        );
+
+        let body;
+
+        try {
+            body = await request.json();
+        } catch {
+            throw new AppError(
+                400,
+                "El cuerpo de la solicitud no contiene JSON válido."
+            );
+        }
+
+        if (
+            !body ||
+            typeof body !== "object" ||
+            Array.isArray(body)
+        ) {
+            throw new AppError(
+                400,
+                "Solicitud inválida."
+            );
+        }
+
+        let result;
+
+        switch (body.action) {
+            case "create":
+                result = await createAppointment(
+                    db,
+                    identity,
+                    body.appointment
+                );
+                break;
+
+            case "update":
+                result = await updateAppointment(
+                    db,
+                    identity,
+                    body.id,
+                    body.appointment
+                );
+                break;
+
+            case "cancel":
+                result = await cancelAppointment(
+                    db,
+                    identity,
+                    body.id
+                );
+                break;
+
+            case "status":
+                result = await changeAppointmentStatus(
+                    db,
+                    identity,
+                    body.id,
+                    body.status
+                );
+                break;
+
+            default:
+                throw new AppError(
+                    400,
+                    "Acción no válida."
+                );
+        }
+
+        return json(
+            200,
+            {
+                ok: true,
+                ...result
+            }
+        );
+
+    } catch (error) {
+        if (error instanceof AppError) {
+            return json(
+                error.status,
+                {
+                    ok: false,
+                    error: error.message
+                }
+            );
+        }
+
+        console.error(
+            "Error interno al gestionar cita:",
+            error
+        );
+
+        return json(
+            500,
+            {
+                ok: false,
+                error:
+                    "No se pudo completar la operación."
+            }
+        );
+    }
+}

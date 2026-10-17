@@ -1,236 +1,156 @@
 
-import { auth, db } from "./firebase.js";
+import { auth } from "./firebase.js";
 
-import {
-    doc,
-    getDoc
-} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+const ENDPOINT =
+  "/.netlify/functions/manage-customers";
 
-const section = document.getElementById("barberAccountSection");
-const form = document.getElementById("barberAccountForm");
-const emailInput = document.getElementById("barberAccountEmail");
-const passwordInput = document.getElementById("barberAccountPassword");
-const button = document.getElementById("createBarberAccountButton");
-const message = document.getElementById("barberAccountMessage");
-const modal = document.getElementById("barberModal");
-const grid = document.getElementById("barbersGrid");
-const newBarberButton = document.getElementById("newBarberButton");
+async function requestCustomer(action, data = {}) {
+  await auth.authStateReady();
 
-let selectedBarberId = null;
-let selectionVersion = 0;
-let busy = false;
+  const user = auth.currentUser;
 
-function showMessage(text, success = false) {
-    message.textContent = text;
-    message.style.color = success ? "#218653" : "#c0392b";
-}
-
-function clearAccountForm() {
-    form.reset();
-    showMessage("");
-}
-
-function hideAccountSection() {
-    selectionVersion++;
-    selectedBarberId = null;
-    section.hidden = true;
-
-    if (!busy) {
-        clearAccountForm();
-    }
-}
-
-async function selectBarber(barberId) {
-    hideAccountSection();
-
-    if (!barberId || busy) {
-        return;
-    }
-
-    const currentVersion = selectionVersion;
-
-    try {
-        const snapshot = await getDoc(
-            doc(db, "barbers", barberId)
-        );
-
-        if (
-            currentVersion !== selectionVersion ||
-            modal.classList.contains("hidden")
-        ) {
-            return;
-        }
-
-        if (!snapshot.exists()) {
-            return;
-        }
-
-        const barber = snapshot.data();
-
-        if (barber.status !== "active") {
-            selectedBarberId = barberId;
-            section.hidden = false;
-            showMessage(
-                "Este barbero está inactivo. Actívalo y guarda los cambios antes de crear su cuenta."
-            );
-            button.disabled = true;
-            return;
-        }
-
-        selectedBarberId = barberId;
-        section.hidden = false;
-        button.disabled = false;
-
-    } catch (error) {
-        console.error(
-            "Error comprobando barbero en Firebase:",
-            error
-        );
-
-        if (currentVersion === selectionVersion) {
-            section.hidden = false;
-            button.disabled = true;
-            showMessage(
-                "No se pudo verificar el barbero en Firebase."
-            );
-        }
-    }
-}
-
-function observeBarberModal() {
-    newBarberButton?.addEventListener(
-        "click",
-        hideAccountSection
+  if (!user) {
+    throw new Error(
+      "Debes iniciar sesión para gestionar clientes."
     );
+  }
 
-    grid?.addEventListener("click", event => {
-        const editButton = event.target.closest(
-            "[data-action='edit']"
-        );
+  const token = await user.getIdToken();
 
-        if (!editButton || busy) {
-            return;
-        }
+  let response;
 
-        const barberId = editButton.dataset.id;
-
-        if (barberId) {
-            selectBarber(barberId);
-        }
+  try {
+    response = await fetch(ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        action,
+        ...data
+      })
     });
+  } catch {
+    throw new Error(
+      "No se pudo conectar con el servidor."
+    );
+  }
 
-    const observer = new MutationObserver(() => {
-        if (modal.classList.contains("hidden")) {
-            hideAccountSection();
-        }
-    });
+  let result;
 
-    observer.observe(modal, {
-        attributes: true,
-        attributeFilter: ["class"]
-    });
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error(
+      "El servidor devolvió una respuesta inválida."
+    );
+  }
+
+  if (!response.ok || !result.ok) {
+    throw new Error(
+      result.error ||
+      "No se pudo completar la operación."
+    );
+  }
+
+  return result;
 }
 
-form.addEventListener("submit", async event => {
-    event.preventDefault();
+export async function findBarberCustomerByPhone(phone) {
+  const normalized = String(phone ?? "")
+    .replace(/\D/g, "");
 
-    if (busy) {
-        return;
-    }
+  if (!normalized) {
+    return null;
+  }
 
-    if (!selectedBarberId || button.disabled) {
-        showMessage(
-            "Selecciona un barbero activo guardado en Firebase."
-        );
-        return;
-    }
+  const result = await requestCustomer("find", {
+    phone: normalized
+  });
 
-    const email = emailInput.value.trim().toLowerCase();
-    const password = passwordInput.value;
-    const barberId = selectedBarberId;
+  return result.customer || null;
+}
 
-    if (!emailInput.checkValidity()) {
-        showMessage("Ingresa un correo electrónico válido.");
-        return;
-    }
+export async function getBarberCustomerById(customerId) {
+  if (!customerId) {
+    return null;
+  }
 
-    if (password.length < 8 || password.length > 128) {
-        showMessage(
-            "La contraseña debe tener entre 8 y 128 caracteres."
-        );
-        return;
-    }
+  const result = await requestCustomer("get", {
+    customerId
+  });
 
-    const user = auth.currentUser;
+  return result.customer || null;
+}
 
-    if (!user) {
-        showMessage(
-            "Tu sesión expiró. Inicia sesión nuevamente."
-        );
-        return;
-    }
+export async function searchBarberCustomers(query) {
+  const text = String(query ?? "").trim();
 
-    busy = true;
-    button.disabled = true;
-    button.textContent = "Creando cuenta...";
-    showMessage("");
+  if (text.length < 2) {
+    return [];
+  }
 
-    try {
-        const token = await user.getIdToken();
+  const result = await requestCustomer("search", {
+    query: text
+  });
 
-        const response = await fetch(
-            "/.netlify/functions/create-barber",
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    barberId,
-                    email,
-                    password
-                })
-            }
-        );
+  return Array.isArray(result.customers)
+    ? result.customers
+    : [];
+}
 
-        const result = await response.json();
+export async function saveBarberCustomer(
+  name,
+  phone = "",
+  customerId = null
+) {
+  const result = await requestCustomer("save", {
+    name,
+    phone,
+    customerId
+  });
 
-        if (!response.ok) {
-            throw new Error(
-                result.error ||
-                "No se pudo crear la cuenta."
-            );
-        }
+  return result.customer;
+}
 
-        passwordInput.value = "";
+export async function createBarberCustomer(
+  name,
+  phone = ""
+) {
+  const result = await requestCustomer("save", {
+    name,
+    phone
+  });
 
-        showMessage(
-            "Cuenta creada correctamente. El barbero ya puede iniciar sesión.",
-            true
-        );
+  return {
+    customer: result.customer,
+    created: Boolean(result.created)
+  };
+}
 
-        button.textContent = "Cuenta creada";
-        return;
+export async function addPhoneToBarberCustomer(
+  customerId,
+  name,
+  phone
+) {
+  if (!customerId) {
+    throw new Error(
+      "Selecciona primero el cliente."
+    );
+  }
 
-    } catch (error) {
-        console.error(
-            "Error creando cuenta de barbero:",
-            error
-        );
+  if (!phone) {
+    throw new Error(
+      "Ingresa el teléfono que deseas agregar."
+    );
+  }
 
-        showMessage(
-            error.message || "No se pudo crear la cuenta."
-        );
+  const result = await requestCustomer("save", {
+    customerId,
+    name,
+    phone
+  });
 
-    } finally {
-        busy = false;
-
-        if (button.textContent !== "Cuenta creada") {
-            button.disabled = false;
-            button.textContent = "Crear cuenta de acceso";
-        }
-    }
-});
-
-observeBarberModal();
+  return result.customer;
+}

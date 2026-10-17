@@ -3,7 +3,13 @@
    EDUARDO'S BARBERSHOP
    CUSTOMERS.JS
    CLIENTES CON FIREBASE FIRESTORE
-   Sin datos de demostración
+
+   - Clientes con teléfono opcional
+   - Identidad permanente por customerId
+   - Registro mediante Netlify Functions
+   - Historial de citas seguro
+   - Estadísticas y visitas
+   - Búsqueda y agendado
 ========================================================= */
 
 import {
@@ -11,10 +17,12 @@ import {
     getAppointments,
     getBarbers,
     getServices,
-    saveCustomer,
-    normalizePhone,
-    generateId
+    normalizePhone
 } from "./firestore-storage.js";
+
+import {
+    saveBarberCustomer
+} from "./barber-customers.js";
 
 /* =========================================================
    ESTADO
@@ -29,6 +37,7 @@ let selectedCustomerId = null;
 let searchTerm = "";
 let toastTimer = null;
 let isSaving = false;
+let isUpdatingPhone = false;
 
 /* =========================================================
    ELEMENTOS
@@ -233,6 +242,25 @@ function configureEvents() {
             }
         }
     );
+
+    /*
+     * Permite guardar con Enter en el
+     * formulario de cliente nuevo.
+     */
+    const nameInput =
+        document.getElementById("newCustomerName");
+
+    const phoneInput =
+        document.getElementById("newCustomerPhone");
+
+    for (const input of [nameInput, phoneInput]) {
+        input?.addEventListener("keydown", event => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                saveNewCustomer();
+            }
+        });
+    }
 }
 
 /* =========================================================
@@ -321,7 +349,9 @@ function renderCustomers() {
         const name = String(customer.name || "")
             .toLowerCase();
 
-        const phone = normalizePhone(customer.phone);
+        const phone = normalizePhone(
+            customer.phone || ""
+        );
 
         const normalizedSearch =
             normalizePhone(searchTerm);
@@ -383,7 +413,10 @@ function renderCustomers() {
                         </h3>
 
                         <p>
-                            ${escapeHTML(customer.phone)}
+                            ${escapeHTML(
+                                customer.phone ||
+                                "Sin teléfono"
+                            )}
                         </p>
                     </div>
                 </div>
@@ -502,7 +535,7 @@ function openCustomerModal(customerId) {
 
     document.getElementById(
         "customerModalPhone"
-    ).textContent = customer.phone;
+    ).textContent = customer.phone || "Sin teléfono";
 
     document.getElementById(
         "modalVisits"
@@ -521,7 +554,145 @@ function openCustomerModal(customerId) {
     ).textContent = cancelled;
 
     renderCustomerHistory(customerAppointments);
+    renderAddPhoneAction(customer);
+
     openCustomerModalElement();
+}
+
+/* =========================================================
+   AGREGAR TELÉFONO A CLIENTE EXISTENTE
+========================================================= */
+
+function renderAddPhoneAction(customer) {
+    const phoneElement =
+        document.getElementById("customerModalPhone");
+
+    if (!phoneElement) {
+        return;
+    }
+
+    const previousButton =
+        document.getElementById(
+            "addCustomerPhoneButton"
+        );
+
+    previousButton?.remove();
+
+    if (normalizePhone(customer.phone || "")) {
+        return;
+    }
+
+    const button = document.createElement("button");
+
+    button.id = "addCustomerPhoneButton";
+    button.type = "button";
+    button.className = "btn btn-outline";
+    button.textContent = "Agregar teléfono";
+    button.style.marginTop = "10px";
+
+    button.addEventListener("click", () => {
+        addPhoneToSelectedCustomer(customer.id);
+    });
+
+    phoneElement.insertAdjacentElement(
+        "afterend",
+        button
+    );
+}
+
+async function addPhoneToSelectedCustomer(customerId) {
+    if (isUpdatingPhone) {
+        return;
+    }
+
+    const customer = customers.find(
+        item => item.id === customerId
+    );
+
+    if (!customer) {
+        showToast("No se encontró el cliente.");
+        return;
+    }
+
+    if (normalizePhone(customer.phone || "")) {
+        showToast(
+            "Este cliente ya tiene un teléfono registrado."
+        );
+        return;
+    }
+
+    const enteredPhone = window.prompt(
+        `Teléfono de ${customer.name}:`
+    );
+
+    if (enteredPhone === null) {
+        return;
+    }
+
+    const phone = enteredPhone.trim();
+
+    if (
+        normalizePhone(phone).length < 7 ||
+        normalizePhone(phone).length > 15
+    ) {
+        showToast(
+            "Ingresa un teléfono válido de 7 a 15 dígitos."
+        );
+        return;
+    }
+
+    isUpdatingPhone = true;
+
+    const button =
+        document.getElementById(
+            "addCustomerPhoneButton"
+        );
+
+    if (button) {
+        button.disabled = true;
+        button.textContent = "Guardando...";
+    }
+
+    try {
+        await saveBarberCustomer(
+            customer.name,
+            phone,
+            customer.id
+        );
+
+        await loadData();
+
+        const updated = customers.find(
+            item => item.id === customerId
+        );
+
+        if (updated) {
+            openCustomerModal(customerId);
+        }
+
+        showToast(
+            "Teléfono agregado correctamente."
+        );
+
+    } catch (error) {
+        console.error(
+            "Error agregando teléfono:",
+            error
+        );
+
+        showToast(
+            error.message ||
+            "No se pudo agregar el teléfono."
+        );
+
+    } finally {
+        isUpdatingPhone = false;
+
+        if (button.isConnected) {
+            button.disabled = false;
+            button.textContent = "Agregar teléfono";
+        }
+    }
 }
 
 /* =========================================================
@@ -612,7 +783,7 @@ function bookSelectedCustomer() {
         JSON.stringify({
             id: customer.id,
             name: customer.name,
-            phone: customer.phone
+            phone: customer.phone || ""
         })
     );
 
@@ -636,40 +807,60 @@ async function saveNewCustomer() {
         "newCustomerPhone"
     ).value.trim();
 
-    if (!name) {
-        showToast("Ingresa el nombre del cliente.");
-        return;
-    }
-
-    if (normalizePhone(phone).length < 7) {
-        showToast("Ingresa un teléfono válido.");
+    if (name.length < 2) {
+        showToast(
+            "Ingresa un nombre de al menos 2 caracteres."
+        );
         return;
     }
 
     const normalized = normalizePhone(phone);
 
-    const exists = customers.some(
-        customer =>
-            normalizePhone(customer.phone) === normalized
-    );
-
-    if (exists) {
+    /*
+     * Teléfono opcional:
+     * vacío es válido.
+     */
+    if (
+        phone &&
+        (
+            normalized.length < 7 ||
+            normalized.length > 15
+        )
+    ) {
         showToast(
-            "Ya existe un cliente con ese teléfono."
+            "El teléfono debe tener entre 7 y 15 dígitos."
         );
         return;
+    }
+
+    /*
+     * Comprobación rápida para mostrar un
+     * mensaje claro. La comprobación definitiva
+     * se realiza en el servidor.
+     */
+    if (normalized) {
+        const exists = customers.some(
+            customer =>
+                normalizePhone(customer.phone || "") ===
+                normalized
+        );
+
+        if (exists) {
+            showToast(
+                "Ya existe un cliente con ese teléfono."
+            );
+            return;
+        }
     }
 
     isSaving = true;
     saveNewCustomerButton.disabled = true;
 
     try {
-        await saveCustomer({
-            id: generateId("customer"),
+        await saveBarberCustomer(
             name,
-            phone,
-            visits: 0
-        });
+            phone
+        );
 
         await loadData();
 
@@ -686,6 +877,7 @@ async function saveNewCustomer() {
         );
 
         showToast(
+            error.message ||
             "No se pudo guardar el cliente en Firebase."
         );
 
@@ -697,6 +889,11 @@ async function saveNewCustomer() {
 
 /* =========================================================
    CITAS DEL CLIENTE
+
+   PRIORIDAD:
+   1. customerId permanente.
+   2. Teléfono solo para citas históricas
+      que no tienen customerId.
 ========================================================= */
 
 function getCustomerAppointments(
@@ -704,19 +901,25 @@ function getCustomerAppointments(
     customerAppointments
 ) {
     const customerPhone =
-        normalizePhone(customer.phone);
+        normalizePhone(customer.phone || "");
 
     return customerAppointments.filter(appointment => {
-        if (
-            appointment.customerId &&
-            appointment.customerId === customer.id
-        ) {
-            return true;
+        /*
+         * Una cita con customerId pertenece
+         * únicamente a ese cliente.
+         */
+        if (appointment.customerId) {
+            return appointment.customerId === customer.id;
         }
 
+        /*
+         * Compatibilidad con citas antiguas:
+         * solo se compara teléfono cuando
+         * no existe customerId.
+         */
         return (
             customerPhone.length > 0 &&
-            normalizePhone(appointment.phone) ===
+            normalizePhone(appointment.phone || "") ===
                 customerPhone
         );
     });
