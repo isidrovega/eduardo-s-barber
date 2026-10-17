@@ -15,18 +15,25 @@ import {
 
 /* =========================================================
    EDUARDO'S BARBERSHOP
-   REPORTS.JS
+   REPORTES CON RANGO PERSONALIZADO DE FECHAS
 
-   Reportes conectados a Firebase Firestore.
-   Sin registros de demostración.
-   Sin almacenamiento local.
+   - Fecha de inicio y fecha de fin.
+   - Fechas inclusivas.
+   - Filtros aplicados a todos los reportes.
+   - Datos obtenidos desde Firebase Firestore.
+   - Sin modificar la base de datos.
 ========================================================= */
 
-let currentPeriod = "week";
+const TIME_ZONE = "America/Mazatlan";
 
 let appointmentsData = [];
 let servicesData = [];
 let barbersData = [];
+
+let startDateInput = null;
+let endDateInput = null;
+let dateErrorElement = null;
+let reportsLoaded = false;
 
 const reportSummary =
     document.getElementById("reportSummary");
@@ -50,19 +57,396 @@ const originsReport =
     document.getElementById("originsReport");
 
 /* =========================================================
+   FECHAS
+========================================================= */
+
+function getToday() {
+    const parts = new Intl.DateTimeFormat(
+        "en-US",
+        {
+            timeZone: TIME_ZONE,
+            year: "numeric",
+            month: "2-digit",
+            day: "2-digit"
+        }
+    ).formatToParts(new Date());
+
+    const values = Object.fromEntries(
+        parts
+            .filter(part => part.type !== "literal")
+            .map(part => [part.type, part.value])
+    );
+
+    return [
+        values.year,
+        values.month,
+        values.day
+    ].join("-");
+}
+
+function isValidDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || "")) {
+        return false;
+    }
+
+    const date = new Date(`${value}T12:00:00Z`);
+
+    if (Number.isNaN(date.getTime())) {
+        return false;
+    }
+
+    return (
+        date.getUTCFullYear() === Number(value.slice(0, 4)) &&
+        date.getUTCMonth() + 1 === Number(value.slice(5, 7)) &&
+        date.getUTCDate() === Number(value.slice(8, 10))
+    );
+}
+
+function getMonthStart(value) {
+    return `${value.slice(0, 7)}-01`;
+}
+
+function formatDate(value) {
+    if (!isValidDate(value)) {
+        return value || "";
+    }
+
+    return new Intl.DateTimeFormat(
+        "es-MX",
+        {
+            day: "numeric",
+            month: "long",
+            year: "numeric",
+            timeZone: "UTC"
+        }
+    ).format(
+        new Date(`${value}T12:00:00Z`)
+    );
+}
+
+/* =========================================================
+   ELEMENTOS
+========================================================= */
+
+function createElement(tag, className, text) {
+    const element = document.createElement(tag);
+
+    if (className) {
+        element.className = className;
+    }
+
+    if (text !== undefined) {
+        element.textContent = String(text);
+    }
+
+    return element;
+}
+
+function installDateFilterStyles() {
+    if (
+        document.getElementById(
+            "reports-custom-date-styles"
+        )
+    ) {
+        return;
+    }
+
+    const style = document.createElement("style");
+
+    style.id = "reports-custom-date-styles";
+
+    style.textContent = `
+        .reports-custom-date-filter {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: flex-end;
+            gap: 14px;
+            width: 100%;
+            margin: 12px 0 18px;
+        }
+
+        .reports-custom-date-field {
+            display: flex;
+            flex-direction: column;
+            gap: 7px;
+            flex: 1 1 190px;
+            min-width: 0;
+        }
+
+        .reports-custom-date-field label {
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .reports-custom-date-field input {
+            display: block;
+            width: 100%;
+            min-height: 43px;
+            box-sizing: border-box;
+            padding: 9px 11px;
+            border: 1px solid #888;
+            border-radius: 8px;
+            background: #fff;
+            color: #222;
+            font: inherit;
+            color-scheme: light;
+        }
+
+        .reports-custom-date-field input:focus-visible {
+            outline: 2px solid #c49a45;
+            outline-offset: 2px;
+        }
+
+        .reports-custom-date-error {
+            display: none;
+            flex-basis: 100%;
+            margin: 0;
+            color: #c0392b;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .reports-custom-date-error.is-visible {
+            display: block;
+        }
+
+        @media (max-width: 480px) {
+            .reports-custom-date-filter {
+                gap: 10px;
+            }
+
+            .reports-custom-date-field {
+                flex-basis: 100%;
+            }
+        }
+    `;
+
+    document.head.append(style);
+}
+
+/* =========================================================
+   CREAR FILTROS DE FECHA
+
+   Reemplaza los botones existentes [data-period]
+   sin requerir cambios en el archivo HTML.
+========================================================= */
+
+function initializeDateFilters() {
+    installDateFilterStyles();
+
+    const oldButtons = Array.from(
+        document.querySelectorAll("[data-period]")
+    );
+
+    const existingFilter = document.getElementById(
+        "reportsCustomDateFilter"
+    );
+
+    if (existingFilter) {
+        startDateInput = document.getElementById(
+            "reportStartDate"
+        );
+
+        endDateInput = document.getElementById(
+            "reportEndDate"
+        );
+
+        dateErrorElement = document.getElementById(
+            "reportDateError"
+        );
+
+       if (
+    startDateInput &&
+    endDateInput &&
+    dateErrorElement
+) {
+    const today = getToday();
+
+    if (!startDateInput.value) {
+        startDateInput.value = getMonthStart(today);
+    }
+
+    if (!endDateInput.value) {
+        endDateInput.value = today;
+    }
+
+    startDateInput.addEventListener(
+        "change",
+        renderReports
+    );
+
+    endDateInput.addEventListener(
+        "change",
+        renderReports
+    );
+
+    return;
+}
+
+        existingFilter.remove();
+    }
+
+    const container = createElement(
+        "div",
+        "reports-custom-date-filter"
+    );
+
+    container.id = "reportsCustomDateFilter";
+
+    const startField = createElement(
+        "div",
+        "reports-custom-date-field"
+    );
+
+    const startLabel = createElement(
+        "label",
+        "",
+        "Fecha de inicio"
+    );
+
+    startLabel.htmlFor = "reportStartDate";
+
+    startDateInput = createElement("input");
+
+    startDateInput.id = "reportStartDate";
+    startDateInput.type = "date";
+    startDateInput.required = true;
+
+    startField.append(
+        startLabel,
+        startDateInput
+    );
+
+    const endField = createElement(
+        "div",
+        "reports-custom-date-field"
+    );
+
+    const endLabel = createElement(
+        "label",
+        "",
+        "Fecha de fin"
+    );
+
+    endLabel.htmlFor = "reportEndDate";
+
+    endDateInput = createElement("input");
+
+    endDateInput.id = "reportEndDate";
+    endDateInput.type = "date";
+    endDateInput.required = true;
+
+    endField.append(
+        endLabel,
+        endDateInput
+    );
+
+    dateErrorElement = createElement(
+        "p",
+        "reports-custom-date-error"
+    );
+
+    dateErrorElement.id = "reportDateError";
+    dateErrorElement.setAttribute(
+        "role",
+        "alert"
+    );
+
+    container.append(
+        startField,
+        endField,
+        dateErrorElement
+    );
+
+    const today = getToday();
+
+    startDateInput.value = getMonthStart(today);
+    endDateInput.value = today;
+
+    /*
+     * Ubicar los campos donde estaban
+     * los botones de período.
+     */
+    if (oldButtons.length) {
+        const firstButton = oldButtons[0];
+
+        const parent = firstButton.parentElement;
+
+        if (parent) {
+            parent.parentNode.insertBefore(
+                container,
+                parent
+            );
+
+            for (const button of oldButtons) {
+                button.remove();
+            }
+
+            /*
+             * Si el contenedor anterior solamente
+             * tenía botones y espacios, eliminarlo.
+             */
+            if (
+                parent.children.length === 0 &&
+                parent.textContent.trim() === ""
+            ) {
+                parent.remove();
+            }
+        }
+    } else if (reportDateRange?.parentElement) {
+        reportDateRange.insertAdjacentElement(
+            "afterend",
+            container
+        );
+    } else if (reportSummary?.parentElement) {
+        reportSummary.parentElement.insertBefore(
+            container,
+            reportSummary
+        );
+    } else {
+        document.body.prepend(container);
+    }
+
+    startDateInput.addEventListener(
+        "change",
+        renderReports
+    );
+
+    endDateInput.addEventListener(
+        "change",
+        renderReports
+    );
+}
+
+/* =========================================================
    INICIALIZACIÓN
 ========================================================= */
 
 async function initialize() {
-    const user = await protectPage("admin");
+    try {
+        const user = await protectPage("admin");
 
-    if (!user) {
-        return;
+        if (!user) {
+            return;
+        }
+
+        initializeDateFilters();
+
+        await loadData();
+
+    } catch (error) {
+        console.error(
+            "Error al iniciar reportes:",
+            error
+        );
+
+        if (reportDateRange) {
+            reportDateRange.textContent =
+                "No se pudo iniciar el módulo de reportes.";
+        }
+
+        showEmptyReports();
     }
-
-    configureEvents();
-
-    await loadData();
 }
 
 async function loadData() {
@@ -81,6 +465,8 @@ async function loadData() {
         servicesData = services;
         barbersData = barbers;
 
+        reportsLoaded = true;
+
         renderReports();
 
     } catch (error) {
@@ -89,38 +475,89 @@ async function loadData() {
             error
         );
 
-        reportDateRange.textContent =
-            "Error al cargar información de Firebase";
+        reportsLoaded = false;
+
+        if (reportDateRange) {
+            reportDateRange.textContent =
+                "Error al cargar información de Firebase";
+        }
 
         showEmptyReports();
     }
 }
 
 /* =========================================================
-   EVENTOS
+   VALIDACIÓN DEL RANGO
 ========================================================= */
 
-function configureEvents() {
-    document
-        .querySelectorAll("[data-period]")
-        .forEach(button => {
-            button.addEventListener(
-                "click",
-                () => {
-                    document
-                        .querySelectorAll("[data-period]")
-                        .forEach(item => {
-                            item.classList.remove("active");
-                        });
+function getDateRange() {
+    const start = startDateInput?.value || "";
+    const end = endDateInput?.value || "";
 
-                    button.classList.add("active");
+    if (!isValidDate(start) || !isValidDate(end)) {
+        return {
+            valid: false,
+            start,
+            end,
+            message: "Selecciona ambas fechas."
+        };
+    }
 
-                    currentPeriod = button.dataset.period;
+    if (start > end) {
+        return {
+            valid: false,
+            start,
+            end,
+            message:
+                "La fecha de inicio no puede ser posterior " +
+                "a la fecha de fin."
+        };
+    }
 
-                    renderReports();
-                }
+    return {
+        valid: true,
+        start,
+        end,
+        message: ""
+    };
+}
+
+function showDateError(message) {
+    if (!dateErrorElement) {
+        return;
+    }
+
+    dateErrorElement.textContent = message;
+
+    dateErrorElement.classList.toggle(
+        "is-visible",
+        Boolean(message)
+    );
+}
+
+/* =========================================================
+   FILTRADO POR RANGO DE FECHAS
+
+   Se comparan fechas YYYY-MM-DD.
+   Tanto inicio como fin son inclusivos.
+========================================================= */
+
+function getFilteredAppointments(range) {
+    if (!range.valid) {
+        return [];
+    }
+
+    return appointmentsData.filter(
+        appointment => {
+            const date = appointment.date;
+
+            return (
+                isValidDate(date) &&
+                date >= range.start &&
+                date <= range.end
             );
-        });
+        }
+    );
 }
 
 /* =========================================================
@@ -128,10 +565,26 @@ function configureEvents() {
 ========================================================= */
 
 function renderReports() {
-    const appointments =
-        getFilteredAppointments();
+    if (!reportsLoaded) {
+        return;
+    }
 
-    renderPeriod();
+    const range = getDateRange();
+
+    showDateError(range.message);
+
+    if (!range.valid) {
+        reportDateRange.textContent =
+            "Selecciona un rango de fechas válido.";
+
+        showEmptyReports();
+        return;
+    }
+
+    const appointments =
+        getFilteredAppointments(range);
+
+    renderPeriod(range);
     renderSummary(appointments);
     renderRevenue(appointments);
     renderStatuses(appointments);
@@ -140,80 +593,36 @@ function renderReports() {
     renderOrigins(appointments);
 }
 
-function showEmptyReports() {
-    reportSummary.innerHTML = emptyReport();
-    revenueReport.innerHTML = emptyReport();
-    statusReport.innerHTML = emptyReport();
-    servicesReport.innerHTML = emptyReport();
-    barbersReport.innerHTML = emptyReport();
-    originsReport.innerHTML = emptyReport();
-}
-
-/* =========================================================
-   FILTRADO POR PERÍODO
-========================================================= */
-
-function getFilteredAppointments() {
-    if (currentPeriod === "all") {
-        return appointmentsData;
-    }
-
-    const today = startOfDay(new Date());
-
-    let days = 0;
-
-    if (currentPeriod === "week") {
-        days = 6;
-    }
-
-    if (currentPeriod === "month") {
-        days = 29;
-    }
-
-    const start = new Date(today);
-
-    start.setDate(
-        start.getDate() - days
-    );
-
-    const end = endOfDay(today);
-
-    return appointmentsData.filter(appointment => {
-        const date = parseDate(appointment.date);
-
-        return (
-            Number.isFinite(date.getTime()) &&
-            date >= start &&
-            date <= end
-        );
-    });
-}
-
-/* =========================================================
-   ETIQUETA DEL PERÍODO
-========================================================= */
-
-function renderPeriod() {
-    if (currentPeriod === "today") {
-        reportDateRange.textContent =
-            "Actividad de hoy";
-        return;
-    }
-
-    if (currentPeriod === "week") {
-        reportDateRange.textContent =
-            "Últimos 7 días";
-        return;
-    }
-
-    if (currentPeriod === "month") {
-        reportDateRange.textContent =
-            "Últimos 30 días";
-        return;
-    }
-
+function renderPeriod(range) {
     reportDateRange.textContent =
-        "Todo el historial";
+        `Del ${formatDate(range.start)} ` +
+        `al ${formatDate(range.end)}`;
+}
+
+function showEmptyReports() {
+    if (reportSummary) {
+        reportSummary.innerHTML = emptyReport();
+    }
+
+    if (revenueReport) {
+        revenueReport.innerHTML = emptyReport();
+    }
+
+    if (statusReport) {
+        statusReport.innerHTML = emptyReport();
+    }
+
+    if (servicesReport) {
+        servicesReport.innerHTML = emptyReport();
+    }
+
+    if (barbersReport) {
+        barbersReport.innerHTML = emptyReport();
+    }
+
+    if (originsReport) {
+        originsReport.innerHTML = emptyReport();
+    }
 }
 
 /* =========================================================
@@ -234,6 +643,10 @@ function renderSummary(appointments) {
 
     const revenue = calculateRevenue(completed);
 
+    /*
+     * Se conserva el cálculo de clientes
+     * utilizado en el reporte original.
+     */
     const customers = new Set(
         completed
             .map(appointment =>
@@ -407,10 +820,11 @@ function renderBarbers(appointments) {
 
     const data = barbersData
         .map(barber => {
-            const barberAppointments = completed.filter(
-                appointment =>
-                    appointment.barberId === barber.id
-            );
+            const barberAppointments =
+                completed.filter(
+                    appointment =>
+                        appointment.barberId === barber.id
+                );
 
             return {
                 ...barber,
@@ -466,10 +880,11 @@ function renderOrigins(appointments) {
         return;
     }
 
-    const counts = {};
+    const counts = Object.create(null);
 
     appointments.forEach(appointment => {
-        const origin = appointment.origin || "unknown";
+        const origin =
+            appointment.origin || "unknown";
 
         counts[origin] =
             (counts[origin] || 0) + 1;
@@ -486,7 +901,9 @@ function renderOrigins(appointments) {
     originsReport.innerHTML = data
         .map(item => {
             const percentage = Math.round(
-                item.count / appointments.length * 100
+                item.count /
+                appointments.length *
+                100
             );
 
             return `
@@ -519,7 +936,9 @@ function renderOrigins(appointments) {
 }
 
 /* =========================================================
-   INGRESOS
+   CÁLCULO DE INGRESOS
+
+   Conserva el comportamiento original.
 ========================================================= */
 
 function calculateRevenue(appointments) {
@@ -530,7 +949,10 @@ function calculateRevenue(appointments) {
                     item.id === appointment.serviceId
             );
 
-            return total + Number(service?.price || 0);
+            return (
+                total +
+                Number(service?.price || 0)
+            );
         },
         0
     );
@@ -539,48 +961,6 @@ function calculateRevenue(appointments) {
 /* =========================================================
    UTILIDADES
 ========================================================= */
-
-function parseDate(value) {
-    const [year, month, day] = String(value)
-        .split("-")
-        .map(Number);
-
-    if (
-        !Number.isInteger(year) ||
-        !Number.isInteger(month) ||
-        !Number.isInteger(day)
-    ) {
-        return new Date(NaN);
-    }
-
-    const date = new Date(
-        year,
-        month - 1,
-        day
-    );
-
-    if (
-        date.getFullYear() !== year ||
-        date.getMonth() !== month - 1 ||
-        date.getDate() !== day
-    ) {
-        return new Date(NaN);
-    }
-
-    return date;
-}
-
-function startOfDay(date) {
-    const result = new Date(date);
-    result.setHours(0, 0, 0, 0);
-    return result;
-}
-
-function endOfDay(date) {
-    const result = new Date(date);
-    result.setHours(23, 59, 59, 999);
-    return result;
-}
 
 function normalizePhone(value) {
     return String(value || "")
@@ -627,11 +1007,14 @@ function getInitials(name) {
 }
 
 function formatMoney(value) {
-    return new Intl.NumberFormat("es-MX", {
-        style: "currency",
-        currency: "MXN",
-        maximumFractionDigits: 0
-    }).format(Number(value) || 0);
+    return new Intl.NumberFormat(
+        "es-MX",
+        {
+            style: "currency",
+            currency: "MXN",
+            maximumFractionDigits: 0
+        }
+    ).format(Number(value) || 0);
 }
 
 function emptyReport() {
@@ -644,7 +1027,9 @@ function emptyReport() {
 
 function escapeHTML(value) {
     const element = document.createElement("div");
+
     element.textContent = String(value ?? "");
+
     return element.innerHTML;
 }
 

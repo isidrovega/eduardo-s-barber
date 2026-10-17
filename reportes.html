@@ -123,25 +123,42 @@
                 </div>
 
 
-                <div class="module-filters">
+               <div class="module-filters reports-date-filters"
+     id="reportsCustomDateFilter">
 
-                    <button type="button" class="filter" data-period="today">
-                        Hoy
-                    </button>
+    <div class="reports-custom-date-field">
+        <label for="reportStartDate">
+            Fecha de inicio
+        </label>
 
-                    <button type="button" class="filter active" data-period="week">
-                        7 días
-                    </button>
+        <input
+            type="date"
+            id="reportStartDate"
+            name="reportStartDate"
+            required
+        >
+    </div>
 
-                    <button type="button" class="filter" data-period="month">
-                        30 días
-                    </button>
+    <div class="reports-custom-date-field">
+        <label for="reportEndDate">
+            Fecha de fin
+        </label>
 
-                    <button type="button" class="filter" data-period="all">
-                        Todo
-                    </button>
+        <input
+            type="date"
+            id="reportEndDate"
+            name="reportEndDate"
+            required
+        >
+    </div>
 
-                </div>
+    <p
+        class="reports-custom-date-error"
+        id="reportDateError"
+        role="alert"
+    ></p>
+
+</div>
 
             </section>
 
