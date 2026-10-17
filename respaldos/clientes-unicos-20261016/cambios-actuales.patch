@@ -1,0 +1,1655 @@
+diff --git a/js/admin.js b/js/admin.js
+index 3fa3aa1..1df0260 100644
+--- a/js/admin.js
++++ b/js/admin.js
+@@ -58,6 +58,7 @@ const timeContainer = document.getElementById("appointmentTimes");
+ const customerDetection = document.getElementById("customerDetection");
+ 
+ const statsContainer = document.getElementById("dashboardStats");
++
+ const appointmentsContainer = document.getElementById(
+   "dashboardAppointments"
+ );
+@@ -296,7 +297,13 @@ async function detectCustomer() {
+ 
+   const lookupVersion = ++customerLookupVersion;
+ 
+-  if (phone.replace(/\D/g, "").length < 7) {
++  const phoneDigits = phone.replace(/\D/g, "");
++
++  if (
++    !phone ||
++    phoneDigits.length < 7 ||
++    phoneDigits.length > 15
++  ) {
+     customerDetection.replaceChildren();
+     return;
+   }
+@@ -519,7 +526,7 @@ async function openModal() {
+     modal.classList.remove("hidden");
+ 
+     setTimeout(() => {
+-      phoneInput.focus();
++      nameInput.focus();
+     }, 50);
+ 
+   } catch (error) {
+@@ -811,8 +818,22 @@ async function saveAppointment() {
+     return;
+   }
+ 
+-  if (phone.replace(/\D/g, "").length < 7) {
+-    showToast("Ingresa un teléfono válido.");
++  // El teléfono es opcional.
++  // Si se proporciona, debe tener entre 7 y 15 dígitos.
++
++  const phoneDigits = phone.replace(/\D/g, "");
++
++  if (
++    phone &&
++    (
++      phoneDigits.length < 7 ||
++      phoneDigits.length > 15
++    )
++  ) {
++    showToast(
++      "El teléfono debe tener entre 7 y 15 dígitos, o dejarse vacío."
++    );
++
+     phoneInput.focus();
+     return;
+   }
+@@ -886,14 +907,21 @@ async function saveAppointment() {
+ 
+     appointmentCreated = true;
+ 
+-    await getOrCreateCustomer(name, phone);
++    // Solo registrar o actualizar cliente si hay teléfono.
++
++    if (phone) {
++      await getOrCreateCustomer(name, phone);
++    }
+ 
+     closeModal();
+ 
++    // Actualizar estadísticas sin bloquear el mensaje de éxito.
+     await refreshCustomerCount();
+ 
+     showToast(
+-      `Cita de ${name} y cliente registrados en Firebase.`
++      phone
++        ? `Cita de ${name} y cliente registrados en Firebase.`
++        : `Cita de ${name} registrada correctamente.`
+     );
+ 
+   } catch (error) {
+diff --git a/js/appointments.js b/js/appointments.js
+index 077a71e..964f621 100644
+--- a/js/appointments.js
++++ b/js/appointments.js
+@@ -1013,11 +1013,17 @@ async function saveAppointment() {
+     return;
+   }
+ 
++  const phoneDigits = phone.replace(/\D/g, "");
++
+   if (
+-    phone.replace(/\D/g, "").length < 7
++    phone &&
++    (
++      phoneDigits.length < 7 ||
++      phoneDigits.length > 15
++    )
+   ) {
+     showToast(
+-      "Ingresa un teléfono válido."
++      "El teléfono debe tener entre 7 y 15 dígitos, o dejarse vacío."
+     );
+ 
+     phoneInput.focus();
+@@ -1089,17 +1095,21 @@ async function saveAppointment() {
+ 
+     appointmentCreated = true;
+ 
+-    await getOrCreateCustomer(
+-      name,
+-      phone
+-    );
++    if (phone) {
++      await getOrCreateCustomer(
++        name,
++        phone
++      );
++    }
+ 
+     closeModal();
+ 
+     renderAppointments();
+ 
+     showToast(
+-      `Cita de ${name} y cliente registrados en Firebase.`
++      phone
++        ? `Cita de ${name} y cliente registrados en Firebase.`
++        : `Cita de ${name} registrada correctamente.`
+     );
+ 
+   } catch (error) {
+diff --git a/js/barber-accounts.js b/js/barber-accounts.js
+index ca62987..47222d8 100644
+--- a/js/barber-accounts.js
++++ b/js/barber-accounts.js
+@@ -1,236 +1,156 @@
+ 
+-import { auth, db } from "./firebase.js";
+-
+-import {
+-    doc,
+-    getDoc
+-} from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+-
+-const section = document.getElementById("barberAccountSection");
+-const form = document.getElementById("barberAccountForm");
+-const emailInput = document.getElementById("barberAccountEmail");
+-const passwordInput = document.getElementById("barberAccountPassword");
+-const button = document.getElementById("createBarberAccountButton");
+-const message = document.getElementById("barberAccountMessage");
+-const modal = document.getElementById("barberModal");
+-const grid = document.getElementById("barbersGrid");
+-const newBarberButton = document.getElementById("newBarberButton");
+-
+-let selectedBarberId = null;
+-let selectionVersion = 0;
+-let busy = false;
+-
+-function showMessage(text, success = false) {
+-    message.textContent = text;
+-    message.style.color = success ? "#218653" : "#c0392b";
+-}
++import { auth } from "./firebase.js";
+ 
+-function clearAccountForm() {
+-    form.reset();
+-    showMessage("");
+-}
++const ENDPOINT =
++  "/.netlify/functions/manage-customers";
++
++async function requestCustomer(action, data = {}) {
++  await auth.authStateReady();
++
++  const user = auth.currentUser;
++
++  if (!user) {
++    throw new Error(
++      "Debes iniciar sesión para gestionar clientes."
++    );
++  }
++
++  const token = await user.getIdToken();
++
++  let response;
++
++  try {
++    response = await fetch(ENDPOINT, {
++      method: "POST",
++      headers: {
++        "Content-Type": "application/json",
++        Authorization: `Bearer ${token}`
++      },
++      body: JSON.stringify({
++        action,
++        ...data
++      })
++    });
++  } catch {
++    throw new Error(
++      "No se pudo conectar con el servidor."
++    );
++  }
+ 
+-function hideAccountSection() {
+-    selectionVersion++;
+-    selectedBarberId = null;
+-    section.hidden = true;
++  let result;
+ 
+-    if (!busy) {
+-        clearAccountForm();
+-    }
++  try {
++    result = await response.json();
++  } catch {
++    throw new Error(
++      "El servidor devolvió una respuesta inválida."
++    );
++  }
++
++  if (!response.ok || !result.ok) {
++    throw new Error(
++      result.error ||
++      "No se pudo completar la operación."
++    );
++  }
++
++  return result;
+ }
+ 
+-async function selectBarber(barberId) {
+-    hideAccountSection();
+-
+-    if (!barberId || busy) {
+-        return;
+-    }
+-
+-    const currentVersion = selectionVersion;
+-
+-    try {
+-        const snapshot = await getDoc(
+-            doc(db, "barbers", barberId)
+-        );
+-
+-        if (
+-            currentVersion !== selectionVersion ||
+-            modal.classList.contains("hidden")
+-        ) {
+-            return;
+-        }
+-
+-        if (!snapshot.exists()) {
+-            return;
+-        }
+-
+-        const barber = snapshot.data();
+-
+-        if (barber.status !== "active") {
+-            selectedBarberId = barberId;
+-            section.hidden = false;
+-            showMessage(
+-                "Este barbero está inactivo. Actívalo y guarda los cambios antes de crear su cuenta."
+-            );
+-            button.disabled = true;
+-            return;
+-        }
+-
+-        selectedBarberId = barberId;
+-        section.hidden = false;
+-        button.disabled = false;
+-
+-    } catch (error) {
+-        console.error(
+-            "Error comprobando barbero en Firebase:",
+-            error
+-        );
+-
+-        if (currentVersion === selectionVersion) {
+-            section.hidden = false;
+-            button.disabled = true;
+-            showMessage(
+-                "No se pudo verificar el barbero en Firebase."
+-            );
+-        }
+-    }
++export async function findBarberCustomerByPhone(phone) {
++  const normalized = String(phone ?? "")
++    .replace(/\D/g, "");
++
++  if (!normalized) {
++    return null;
++  }
++
++  const result = await requestCustomer("find", {
++    phone: normalized
++  });
++
++  return result.customer || null;
+ }
+ 
+-function observeBarberModal() {
+-    newBarberButton?.addEventListener(
+-        "click",
+-        hideAccountSection
+-    );
++export async function getBarberCustomerById(customerId) {
++  if (!customerId) {
++    return null;
++  }
+ 
+-    grid?.addEventListener("click", event => {
+-        const editButton = event.target.closest(
+-            "[data-action='edit']"
+-        );
++  const result = await requestCustomer("get", {
++    customerId
++  });
+ 
+-        if (!editButton || busy) {
+-            return;
+-        }
++  return result.customer || null;
++}
+ 
+-        const barberId = editButton.dataset.id;
++export async function searchBarberCustomers(query) {
++  const text = String(query ?? "").trim();
+ 
+-        if (barberId) {
+-            selectBarber(barberId);
+-        }
+-    });
++  if (text.length < 2) {
++    return [];
++  }
+ 
+-    const observer = new MutationObserver(() => {
+-        if (modal.classList.contains("hidden")) {
+-            hideAccountSection();
+-        }
+-    });
++  const result = await requestCustomer("search", {
++    query: text
++  });
+ 
+-    observer.observe(modal, {
+-        attributes: true,
+-        attributeFilter: ["class"]
+-    });
++  return Array.isArray(result.customers)
++    ? result.customers
++    : [];
++}
++
++export async function saveBarberCustomer(
++  name,
++  phone = "",
++  customerId = null
++) {
++  const result = await requestCustomer("save", {
++    name,
++    phone,
++    customerId
++  });
++
++  return result.customer;
+ }
+ 
+-form.addEventListener("submit", async event => {
+-    event.preventDefault();
+-
+-    if (busy) {
+-        return;
+-    }
+-
+-    if (!selectedBarberId || button.disabled) {
+-        showMessage(
+-            "Selecciona un barbero activo guardado en Firebase."
+-        );
+-        return;
+-    }
+-
+-    const email = emailInput.value.trim().toLowerCase();
+-    const password = passwordInput.value;
+-    const barberId = selectedBarberId;
+-
+-    if (!emailInput.checkValidity()) {
+-        showMessage("Ingresa un correo electrónico válido.");
+-        return;
+-    }
+-
+-    if (password.length < 8 || password.length > 128) {
+-        showMessage(
+-            "La contraseña debe tener entre 8 y 128 caracteres."
+-        );
+-        return;
+-    }
+-
+-    const user = auth.currentUser;
+-
+-    if (!user) {
+-        showMessage(
+-            "Tu sesión expiró. Inicia sesión nuevamente."
+-        );
+-        return;
+-    }
+-
+-    busy = true;
+-    button.disabled = true;
+-    button.textContent = "Creando cuenta...";
+-    showMessage("");
+-
+-    try {
+-        const token = await user.getIdToken();
+-
+-        const response = await fetch(
+-            "/.netlify/functions/create-barber",
+-            {
+-                method: "POST",
+-                headers: {
+-                    "Content-Type": "application/json",
+-                    Authorization: `Bearer ${token}`
+-                },
+-                body: JSON.stringify({
+-                    barberId,
+-                    email,
+-                    password
+-                })
+-            }
+-        );
+-
+-        const result = await response.json();
+-
+-        if (!response.ok) {
+-            throw new Error(
+-                result.error ||
+-                "No se pudo crear la cuenta."
+-            );
+-        }
+-
+-        passwordInput.value = "";
+-
+-        showMessage(
+-            "Cuenta creada correctamente. El barbero ya puede iniciar sesión.",
+-            true
+-        );
+-
+-        button.textContent = "Cuenta creada";
+-        return;
+-
+-    } catch (error) {
+-        console.error(
+-            "Error creando cuenta de barbero:",
+-            error
+-        );
+-
+-        showMessage(
+-            error.message || "No se pudo crear la cuenta."
+-        );
+-
+-    } finally {
+-        busy = false;
+-
+-        if (button.textContent !== "Cuenta creada") {
+-            button.disabled = false;
+-            button.textContent = "Crear cuenta de acceso";
+-        }
+-    }
+-});
+-
+-observeBarberModal();
++export async function createBarberCustomer(
++  name,
++  phone = ""
++) {
++  const result = await requestCustomer("save", {
++    name,
++    phone
++  });
++
++  return {
++    customer: result.customer,
++    created: Boolean(result.created)
++  };
++}
++
++export async function addPhoneToBarberCustomer(
++  customerId,
++  name,
++  phone
++) {
++  if (!customerId) {
++    throw new Error(
++      "Selecciona primero el cliente."
++    );
++  }
++
++  if (!phone) {
++    throw new Error(
++      "Ingresa el teléfono que deseas agregar."
++    );
++  }
++
++  const result = await requestCustomer("save", {
++    customerId,
++    name,
++    phone
++  });
++
++  return result.customer;
++}
+diff --git a/js/barber-appointment-form.js b/js/barber-appointment-form.js
+index a107b62..6f29728 100644
+--- a/js/barber-appointment-form.js
++++ b/js/barber-appointment-form.js
+@@ -1042,9 +1042,9 @@ export function initializeBarberAppointmentForm(barber) {
+             return;
+         }
+ 
+-        if (!isValidPhone(phoneValue)) {
++        if (phoneValue && !isValidPhone(phoneValue)) {
+             message.textContent =
+-                "Ingresa un teléfono válido.";
++                "El teléfono ingresado no es válido.";
+ 
+             phone.focus();
+ 
+@@ -1129,19 +1129,29 @@ export function initializeBarberAppointmentForm(barber) {
+ 
+             appointmentSaved = true;
+ 
+-            message.textContent =
+-                "Cita guardada. Registrando cliente...";
++            if (phoneValue) {
++                message.textContent =
++                    "Cita guardada. Registrando cliente...";
+ 
+-            await saveBarberCustomer(
+-                nameValue,
+-                phoneValue
+-            );
++                await saveBarberCustomer(
++                    nameValue,
++                    phoneValue
++                );
++            }
+ 
+             resetForm();
+ 
+             message.textContent = editingId
+-                ? "Cita modificada y cliente registrado correctamente."
+-                : "Cita y cliente guardados correctamente.";
++                ? (
++                    phoneValue
++                        ? "Cita modificada y cliente registrado correctamente."
++                        : "Cita modificada correctamente."
++                )
++                : (
++                    phoneValue
++                        ? "Cita y cliente guardados correctamente."
++                        : "Cita guardada correctamente."
++                );
+ 
+         } catch (error) {
+             console.error(
+diff --git a/js/barber-customers.js b/js/barber-customers.js
+index d11bf38..def2b29 100644
+--- a/js/barber-customers.js
++++ b/js/barber-customers.js
+@@ -1,89 +1,150 @@
+ 
+ import { auth } from "./firebase.js";
+ 
+-/* =====================================================
+-   CLIENTES DEL PANEL DEL BARBERO
+-   Consultas seguras mediante Netlify
+-===================================================== */
+-
+-async function requestCustomer(action, data) {
+-    await auth.authStateReady();
+-
+-    const user = auth.currentUser;
+-
+-    if (!user) {
+-        throw new Error(
+-            "Tu sesión ha expirado. Inicia sesión nuevamente."
+-        );
+-    }
+-
+-    const token = await user.getIdToken();
+-
+-    let response;
+-
+-    try {
+-        response = await fetch(
+-            "/.netlify/functions/manage-customers",
+-            {
+-                method: "POST",
+-                headers: {
+-                    "Content-Type": "application/json",
+-                    Authorization: `Bearer ${token}`
+-                },
+-                body: JSON.stringify({
+-                    action,
+-                    ...data
+-                })
+-            }
+-        );
+-    } catch {
+-        throw new Error(
+-            "No se pudo conectar con el servidor."
+-        );
+-    }
+-
+-    let result;
+-
+-    try {
+-        result = await response.json();
+-    } catch {
+-        throw new Error(
+-            "El servidor devolvió una respuesta no válida."
+-        );
+-    }
+-
+-    if (!response.ok) {
+-        throw new Error(
+-            result.error ||
+-            "No se pudo procesar el cliente."
+-        );
+-    }
+-
+-    return result;
+-}
++const ENDPOINT =
++  "/.netlify/functions/manage-customers";
+ 
+-export async function findBarberCustomerByPhone(
+-    phone
+-) {
+-    const result = await requestCustomer(
+-        "find",
+-        { phone }
++async function requestCustomer(action, data = {}) {
++  await auth.authStateReady();
++
++  const user = auth.currentUser;
++
++  if (!user) {
++    throw new Error(
++      "Debes iniciar sesión para gestionar clientes."
++    );
++  }
++
++  const token = await user.getIdToken();
++
++  let response;
++
++  try {
++    response = await fetch(ENDPOINT, {
++      method: "POST",
++      headers: {
++        "Content-Type": "application/json",
++        Authorization: `Bearer ${token}`
++      },
++      body: JSON.stringify({
++        action,
++        ...data
++      })
++    });
++  } catch {
++    throw new Error(
++      "No se pudo conectar con el servidor."
++    );
++  }
++
++  let result;
++
++  try {
++    result = await response.json();
++  } catch {
++    throw new Error(
++      "El servidor devolvió una respuesta inválida."
++    );
++  }
++
++  if (!response.ok || !result.ok) {
++    throw new Error(
++      result.error ||
++      "No se pudo completar la operación."
+     );
++  }
++
++  return result;
++}
++
++export async function findBarberCustomerByPhone(phone) {
++  const normalized = String(phone ?? "")
++    .replace(/\D/g, "");
++
++  if (!normalized) return null;
++
++  const result = await requestCustomer("find", {
++    phone: normalized
++  });
++
++  return result.customer || null;
++}
++
++export async function getBarberCustomerById(customerId) {
++  if (!customerId) return null;
++
++  const result = await requestCustomer("get", {
++    customerId
++  });
+ 
+-    return result.customer || null;
++  return result.customer || null;
++}
++
++export async function searchBarberCustomers(query) {
++  const text = String(query ?? "").trim();
++
++  if (text.length < 2) return [];
++
++  const result = await requestCustomer("search", {
++    query: text
++  });
++
++  return Array.isArray(result.customers)
++    ? result.customers
++    : [];
+ }
+ 
+ export async function saveBarberCustomer(
++  name,
++  phone = "",
++  customerId = null
++) {
++  const result = await requestCustomer("save", {
++    name,
++    phone,
++    customerId
++  });
++
++  return result.customer;
++}
++
++export async function createBarberCustomer(
++  name,
++  phone = ""
++) {
++  const result = await requestCustomer("save", {
+     name,
+     phone
++  });
++
++  return {
++    customer: result.customer,
++    created: Boolean(result.created)
++  };
++}
++
++export async function addPhoneToBarberCustomer(
++  customerId,
++  name,
++  phone
+ ) {
+-    const result = await requestCustomer(
+-        "save",
+-        {
+-            name,
+-            phone
+-        }
++  if (!customerId) {
++    throw new Error(
++      "Selecciona primero el cliente."
+     );
++  }
++
++  if (!phone) {
++    throw new Error(
++      "Ingresa el teléfono que deseas agregar."
++    );
++  }
++
++  const result = await requestCustomer("save", {
++    customerId,
++    name,
++    phone
++  });
+ 
+-    return result.customer;
++  return result.customer;
+ }
+diff --git a/netlify/functions/manage-customers.mjs b/netlify/functions/manage-customers.mjs
+index b670afc..da7001c 100644
+--- a/netlify/functions/manage-customers.mjs
++++ b/netlify/functions/manage-customers.mjs
+@@ -1,416 +1,532 @@
+ 
+ import {
+-    initializeApp,
+-    cert,
+-    getApps
++  initializeApp,
++  getApps,
++  cert
+ } from "firebase-admin/app";
+ 
+ import {
+-    getAuth
++  getAuth
+ } from "firebase-admin/auth";
+ 
+ import {
+-    getFirestore
++  getFirestore
+ } from "firebase-admin/firestore";
+ 
+-/* =====================================================
+-   CONFIGURACIÓN
+-===================================================== */
++const ADMIN_UIDS = new Set([
++  "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2",
++  "KcHcm82nZESqoHy7RrHZdyj1y2p2"
++]);
+ 
+-const ADMIN_UID = "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2";
++const MAX_BODY_BYTES = 8192;
+ 
+-const MAX_BODY_BYTES = 4096;
++class AppError extends Error {
++  constructor(message, status = 400) {
++    super(message);
++    this.name = "AppError";
++    this.status = status;
++  }
++}
+ 
+-/* =====================================================
+-   FIREBASE ADMIN
+-===================================================== */
++function json(statusCode, data) {
++  return {
++    statusCode,
++    headers: {
++      "Content-Type": "application/json; charset=utf-8",
++      "Cache-Control": "no-store"
++    },
++    body: JSON.stringify(data)
++  };
++}
+ 
+ function getFirebase() {
++  if (!getApps().length) {
+     const projectId = process.env.FIREBASE_PROJECT_ID;
+     const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+-
+-    const privateKey = (
+-        process.env.FIREBASE_PRIVATE_KEY || ""
+-    )
+-        .trim()
+-        .replace(/^["']|["']$/g, "")
+-        .replace(/\\n/g, "\n")
+-        .trim();
++    const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+ 
+     if (!projectId || !clientEmail || !privateKey) {
+-        throw new Error(
+-            "Falta la configuración privada de Firebase."
+-        );
++      throw new AppError(
++        "Falta la configuración de Firebase.",
++        500
++      );
+     }
+ 
+-    const app = getApps()[0] || initializeApp({
+-        credential: cert({
+-            projectId,
+-            clientEmail,
+-            privateKey
+-        })
++    initializeApp({
++      credential: cert({
++        projectId,
++        clientEmail,
++        privateKey: privateKey.replace(/\\n/g, "\n")
++      })
+     });
++  }
+ 
+-    return {
+-        auth: getAuth(app),
+-        db: getFirestore(app)
+-    };
++  return {
++    auth: getAuth(),
++    db: getFirestore()
++  };
+ }
+ 
+-/* =====================================================
+-   RESPUESTAS
+-===================================================== */
++function normalizePhone(value) {
++  if (value === null || value === undefined || value === "") {
++    return "";
++  }
+ 
+-class AppError extends Error {
+-    constructor(status, message) {
+-        super(message);
+-        this.name = "AppError";
+-        this.status = status;
+-    }
++  if (typeof value !== "string") {
++    throw new AppError("El teléfono no es válido.");
++  }
++
++  const phone = value.replace(/\D/g, "");
++
++  if (phone.length < 7 || phone.length > 15) {
++    throw new AppError(
++      "El teléfono debe tener entre 7 y 15 dígitos."
++    );
++  }
++
++  return phone;
+ }
+ 
+-function json(status, data) {
+-    return new Response(
+-        JSON.stringify(data),
+-        {
+-            status,
+-            headers: {
+-                "Content-Type": "application/json",
+-                "Cache-Control": "no-store",
+-                "Allow": "POST"
+-            }
+-        }
++function normalizeName(value) {
++  if (typeof value !== "string") {
++    throw new AppError("Ingresa el nombre del cliente.");
++  }
++
++  const name = value.trim().replace(/\s+/g, " ");
++
++  if (name.length < 2 || name.length > 120) {
++    throw new AppError(
++      "El nombre debe tener entre 2 y 120 caracteres."
+     );
++  }
++
++  return name;
+ }
+ 
+-/* =====================================================
+-   VALIDACIONES
+-===================================================== */
++function normalizeSearch(value) {
++  return String(value ?? "")
++    .normalize("NFD")
++    .replace(/[\u0300-\u036f]/g, "")
++    .trim()
++    .toLocaleLowerCase("es");
++}
+ 
+-function normalizePhone(phone) {
+-    if (typeof phone !== "string") {
+-        throw new AppError(
+-            400,
+-            "El teléfono no es válido."
+-        );
+-    }
++function validId(value) {
++  return (
++    typeof value === "string" &&
++    value.length > 0 &&
++    value.length <= 150 &&
++    !value.includes("/")
++  );
++}
+ 
+-    const normalized = phone.replace(/\D/g, "");
++function publicCustomer(snapshot) {
++  if (!snapshot.exists) return null;
+ 
+-    if (
+-        normalized.length < 7 ||
+-        normalized.length > 15
+-    ) {
+-        throw new AppError(
+-            400,
+-            "El teléfono debe tener entre 7 y 15 dígitos."
+-        );
+-    }
++  const data = snapshot.data();
+ 
+-    return normalized;
++  return {
++    id: snapshot.id,
++    name: data.name || "",
++    phone: data.phone || "",
++    visits: Number(data.visits) || 0,
++    createdAt: data.createdAt || null,
++    updatedAt: data.updatedAt || null
++  };
+ }
+ 
+-function normalizeName(name) {
+-    if (typeof name !== "string") {
+-        throw new AppError(
+-            400,
+-            "El nombre no es válido."
+-        );
+-    }
++async function getIdentity(auth, db, event) {
++  const header =
++    event.headers?.authorization ||
++    event.headers?.Authorization ||
++    "";
+ 
+-    const normalized = name.trim();
++  const match = header.match(/^Bearer\s+(.+)$/i);
+ 
+-    if (
+-        normalized.length < 2 ||
+-        normalized.length > 120
+-    ) {
+-        throw new AppError(
+-            400,
+-            "El nombre debe tener entre 2 y 120 caracteres."
+-        );
+-    }
++  if (!match) {
++    throw new AppError(
++      "Inicia sesión para continuar.",
++      401
++    );
++  }
++
++  let decoded;
++
++  try {
++    decoded = await auth.verifyIdToken(match[1], true);
++  } catch {
++    throw new AppError(
++      "La sesión no es válida.",
++      401
++    );
++  }
+ 
+-    return normalized;
++  if (ADMIN_UIDS.has(decoded.uid)) {
++    return {
++      uid: decoded.uid,
++      role: "admin"
++    };
++  }
++
++  const userSnapshot = await db
++    .collection("users")
++    .doc(decoded.uid)
++    .get();
++
++  if (!userSnapshot.exists) {
++    throw new AppError("Acceso no autorizado.", 403);
++  }
++
++  const user = userSnapshot.data();
++
++  if (
++    user.role !== "barber" ||
++    user.active !== true ||
++    !validId(user.barberId)
++  ) {
++    throw new AppError("Acceso no autorizado.", 403);
++  }
++
++  const barberSnapshot = await db
++    .collection("barbers")
++    .doc(user.barberId)
++    .get();
++
++  if (
++    !barberSnapshot.exists ||
++    barberSnapshot.data().status !== "active"
++  ) {
++    throw new AppError(
++      "El barbero no está activo.",
++      403
++    );
++  }
++
++  return {
++    uid: decoded.uid,
++    role: "barber",
++    barberId: user.barberId
++  };
+ }
+ 
+-/* =====================================================
+-   AUTENTICACIÓN Y AUTORIZACIÓN
+-===================================================== */
++async function findByPhone(db, phone) {
++  const normalizedPhone = normalizePhone(phone);
++
++  if (!normalizedPhone) {
++    return null;
++  }
+ 
+-async function getIdentity(request, auth, db) {
+-    const authorization =
+-        request.headers.get("authorization") || "";
++  const snapshot = await db
++    .collection("customers")
++    .where("normalizedPhone", "==", normalizedPhone)
++    .limit(2)
++    .get();
+ 
+-    const match = authorization.match(
+-        /^Bearer\s+(.+)$/i
++  if (snapshot.size > 1) {
++    throw new AppError(
++      "Hay varios clientes con este teléfono. " +
++      "Solicita al administrador revisar las fichas.",
++      409
+     );
++  }
+ 
+-    if (!match) {
+-        throw new AppError(
+-            401,
+-            "Debes iniciar sesión."
+-        );
+-    }
++  return snapshot.empty
++    ? null
++    : publicCustomer(snapshot.docs[0]);
++}
+ 
+-    let decoded;
++async function getById(db, id) {
++  if (!validId(id)) {
++    throw new AppError("Identificador inválido.");
++  }
+ 
+-    try {
+-        decoded = await auth.verifyIdToken(
+-            match[1],
+-            true
+-        );
+-    } catch {
+-        throw new AppError(
+-            401,
+-            "La sesión no es válida o ha expirado."
+-        );
+-    }
++  const snapshot = await db
++    .collection("customers")
++    .doc(id)
++    .get();
+ 
+-    if (decoded.uid === ADMIN_UID) {
+-        return {
+-            uid: decoded.uid,
+-            role: "admin"
+-        };
+-    }
++  return publicCustomer(snapshot);
++}
+ 
+-    const profileSnapshot = await db
+-        .collection("users")
+-        .doc(decoded.uid)
+-        .get();
++async function searchCustomers(db, text) {
++  const term = normalizeSearch(text);
++
++  if (term.length < 2) {
++    return [];
++  }
++
++  if (term.length > 120) {
++    throw new AppError("Búsqueda demasiado larga.");
++  }
++
++  /*
++   * La colección actual no dispone de un índice
++   * de nombres normalizados. Se consulta y filtra
++   * sin alterar los documentos existentes.
++   *
++   * Para colecciones muy grandes, conviene
++   * migrar a una búsqueda indexada.
++   */
++  const snapshot = await db
++    .collection("customers")
++    .get();
++
++  return snapshot.docs
++    .filter(document => {
++      const data = document.data();
++
++      return (
++        normalizeSearch(data.name).includes(term) ||
++        String(data.normalizedPhone || "")
++          .includes(term.replace(/\D/g, ""))
++      );
++    })
++    .slice(0, 30)
++    .map(publicCustomer);
++}
+ 
+-    if (!profileSnapshot.exists) {
+-        throw new AppError(
+-            403,
+-            "No tienes autorización."
+-        );
+-    }
++async function saveCustomer(db, input) {
++  const name = normalizeName(input.name);
++  const normalizedPhone = normalizePhone(input.phone);
++  const customerId = input.customerId || null;
+ 
+-    const profile = profileSnapshot.data();
++  if (customerId && !validId(customerId)) {
++    throw new AppError(
++      "El identificador del cliente es inválido."
++    );
++  }
++
++  /*
++   * Comprobar primero los clientes históricos.
++   * No se fusionan fichas automáticamente.
++   */
++  if (normalizedPhone) {
++    const existing = await findByPhone(
++      db,
++      normalizedPhone
++    );
+ 
+     if (
+-        profile.role !== "barber" ||
+-        profile.active !== true ||
+-        typeof profile.barberId !== "string" ||
+-        !profile.barberId
++      existing &&
++      (!customerId || existing.id !== customerId)
+     ) {
++      if (customerId) {
+         throw new AppError(
+-            403,
+-            "Tu cuenta de barbero no está activa."
++          "Este teléfono pertenece a otro cliente.",
++          409
+         );
++      }
++
++      return {
++        customer: existing,
++        created: false
++      };
+     }
++  }
++
++  const now = new Date().toISOString();
++
++  /*
++   * Actualizar una ficha existente.
++   */
++  if (customerId) {
++    const reference = db
++      .collection("customers")
++      .doc(customerId);
+ 
+-    const barberSnapshot = await db
+-        .collection("barbers")
+-        .doc(profile.barberId)
+-        .get();
++    const snapshot = await reference.get();
++
++    if (!snapshot.exists) {
++      throw new AppError(
++        "No se encontró el cliente.",
++        404
++      );
++    }
++
++    const previous = snapshot.data();
++
++    const previousPhone =
++      String(previous.normalizedPhone || "");
+ 
+     if (
+-        !barberSnapshot.exists ||
+-        barberSnapshot.data().status !== "active"
++      previousPhone &&
++      normalizedPhone &&
++      previousPhone !== normalizedPhone
+     ) {
+-        throw new AppError(
+-            403,
+-            "El barbero no está activo."
+-        );
++      throw new AppError(
++        "Para cambiar un teléfono existente, " +
++        "utiliza el proceso de corrección de datos.",
++        409
++      );
+     }
+ 
+-    return {
+-        uid: decoded.uid,
+-        role: "barber",
+-        barberId: profile.barberId
++    const changes = {
++      updatedAt: now
+     };
+-}
+ 
+-/* =====================================================
+-   BUSCAR CLIENTE
+-===================================================== */
+-
+-async function findCustomer(db, phone) {
+-    const normalizedPhone =
+-        normalizePhone(phone);
+-
+-    const snapshot = await db
+-        .collection("customers")
+-        .where(
+-            "normalizedPhone",
+-            "==",
+-            normalizedPhone
+-        )
+-        .limit(1)
+-        .get();
+-
+-    if (snapshot.empty) {
+-        return null;
++    if (normalizedPhone && !previousPhone) {
++      changes.phone = String(input.phone).trim();
++      changes.normalizedPhone = normalizedPhone;
+     }
+ 
+-    const document = snapshot.docs[0];
+-    const customer = document.data();
+-
+     /*
+-       Solo devolvemos los datos necesarios
+-       para el formulario del barbero.
+-    */
++     * No sobrescribir el nombre de un cliente
++     * existente desde una cita.
++     */
++
++    if (Object.keys(changes).length > 1) {
++      await reference.update(changes);
++    }
++
++    const updated = await reference.get();
+ 
+     return {
+-        id: document.id,
+-        name: customer.name || "",
+-        phone: customer.phone || "",
+-        visits: Number(customer.visits) || 0
++      customer: publicCustomer(updated),
++      created: false
+     };
++  }
++
++  /*
++   * Crear cliente nuevo.
++   *
++   * El teléfono es opcional.
++   */
++  const reference = db.collection("customers").doc();
++
++  const customer = {
++    id: reference.id,
++    name,
++    phone: normalizedPhone
++      ? String(input.phone).trim()
++      : "",
++    normalizedPhone,
++    visits: 0,
++    createdAt: now,
++    updatedAt: now
++  };
++
++  await reference.create(customer);
++
++  return {
++    customer,
++    created: true
++  };
+ }
+ 
+-/* =====================================================
+-   REGISTRAR CLIENTE
+-===================================================== */
++async function parseBody(event) {
++  const raw = event.body || "";
+ 
+-async function saveCustomer(db, name, phone) {
+-    const cleanName = normalizeName(name);
+-    const normalizedPhone =
+-        normalizePhone(phone);
+-
+-    const existing = await findCustomer(
+-        db,
+-        phone
++  if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) {
++    throw new AppError(
++      "La solicitud es demasiado grande.",
++      413
+     );
++  }
+ 
+-    if (existing) {
+-        /*
+-           No sobrescribimos automáticamente
+-           los datos del cliente existente.
+-        */
++  try {
++    const body = JSON.parse(raw);
+ 
+-        return {
+-            customer: existing,
+-            created: false
+-        };
++    if (
++      !body ||
++      typeof body !== "object" ||
++      Array.isArray(body)
++    ) {
++      throw new Error("Formato inválido");
+     }
+ 
+-    const reference = db
+-        .collection("customers")
+-        .doc();
+-
+-    const customer = {
+-        id: reference.id,
+-        name: cleanName,
+-        phone: phone.trim(),
+-        normalizedPhone,
+-        visits: 0,
+-        createdAt: new Date().toISOString(),
+-        updatedAt: new Date().toISOString()
+-    };
++    return body;
++  } catch {
++    throw new AppError(
++      "El contenido de la solicitud no es válido."
++    );
++  }
++}
+ 
+-    await reference.set(customer);
++export async function handler(event) {
++  if (event.httpMethod !== "POST") {
++    return json(405, {
++      error: "Método no permitido."
++    });
++  }
+ 
+-    return {
+-        customer: {
+-            id: customer.id,
+-            name: customer.name,
+-            phone: customer.phone,
+-            visits: customer.visits
+-        },
+-        created: true
+-    };
+-}
++  try {
++    const { auth, db } = getFirebase();
+ 
+-/* =====================================================
+-   FUNCIÓN PRINCIPAL
+-===================================================== */
++    await getIdentity(auth, db, event);
+ 
+-export default async function handler(request) {
+-    if (request.method !== "POST") {
+-        return json(405, {
+-            error: "Método no permitido."
+-        });
+-    }
++    const body = await parseBody(event);
+ 
+-    try {
+-        const { auth, db } = getFirebase();
++    switch (body.action) {
++      case "find": {
++        const customer = await findByPhone(
++          db,
++          body.phone
++        );
+ 
+-        /*
+-           Verificamos la identidad antes de
+-           consultar cualquier información.
+-        */
++        return json(200, {
++          ok: true,
++          customer
++        });
++      }
+ 
+-        const identity = await getIdentity(
+-            request,
+-            auth,
+-            db
++      case "get": {
++        const customer = await getById(
++          db,
++          body.customerId
+         );
+ 
+-        const rawBody = await request.text();
+-
+-        if (
+-            new TextEncoder().encode(rawBody).length >
+-            MAX_BODY_BYTES
+-        ) {
+-            throw new AppError(
+-                413,
+-                "La solicitud es demasiado grande."
+-            );
+-        }
+-
+-        let body;
+-
+-        try {
+-            body = JSON.parse(rawBody);
+-        } catch {
+-            throw new AppError(
+-                400,
+-                "La solicitud no contiene JSON válido."
+-            );
+-        }
+-
+-        if (
+-            !body ||
+-            typeof body !== "object" ||
+-            Array.isArray(body)
+-        ) {
+-            throw new AppError(
+-                400,
+-                "La solicitud no es válida."
+-            );
+-        }
+-
+-        if (body.action === "find") {
+-            const customer = await findCustomer(
+-                db,
+-                body.phone
+-            );
+-
+-            return json(200, {
+-                customer
+-            });
+-        }
+-
+-        if (body.action === "save") {
+-            const result = await saveCustomer(
+-                db,
+-                body.name,
+-                body.phone
+-            );
+-
+-            return json(200, result);
+-        }
++        return json(200, {
++          ok: true,
++          customer
++        });
++      }
+ 
+-        throw new AppError(
+-            400,
+-            "Acción no válida."
++      case "search": {
++        const customers = await searchCustomers(
++          db,
++          body.query
+         );
+ 
+-    } catch (error) {
+-        if (error instanceof AppError) {
+-            return json(error.status, {
+-                error: error.message
+-            });
+-        }
++        return json(200, {
++          ok: true,
++          customers
++        });
++      }
+ 
+-        console.error(
+-            "Error en manage-customers:",
+-            error
++      case "save": {
++        const result = await saveCustomer(
++          db,
++          body
+         );
+ 
+-        return json(500, {
+-            error: "No se pudo procesar el cliente."
++        return json(200, {
++          ok: true,
++          ...result
+         });
++      }
++
++      default:
++        throw new AppError(
++          "Acción no reconocida."
++        );
+     }
++  } catch (error) {
++    console.error(
++      "manage-customers:",
++      error
++    );
++
++    return json(
++      error instanceof AppError
++        ? error.status
++        : 500,
++      {
++        ok: false,
++        error:
++          error instanceof AppError
++            ? error.message
++            : "Error interno al gestionar clientes."
++      }
++    );
++  }
+ }

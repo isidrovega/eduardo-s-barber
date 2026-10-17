@@ -7,8 +7,6 @@ import {
 
 import {
   getCustomers,
-  findCustomerByPhone,
-  getOrCreateCustomer,
   getServices,
   getBarbers
 } from "./firestore-storage.js";
@@ -16,6 +14,10 @@ import {
 import { db } from "./firebase.js";
 import { protectPage } from "./auth.js";
 import { createAppointment } from "./appointment-booking.js";
+
+import {
+  createCustomerSelector
+} from "./customer-selector.js";
 
 import {
   collection,
@@ -38,8 +40,8 @@ let savingAppointment = false;
 let openingAppointmentModal = false;
 
 let unsubscribeAppointments = null;
-let customerLookupVersion = 0;
 let toastTimer = null;
+let customerSelector = null;
 
 /* =====================================================
    ELEMENTOS
@@ -58,6 +60,7 @@ const timeContainer = document.getElementById("appointmentTimes");
 const customerDetection = document.getElementById("customerDetection");
 
 const statsContainer = document.getElementById("dashboardStats");
+
 const appointmentsContainer = document.getElementById(
   "dashboardAppointments"
 );
@@ -77,6 +80,7 @@ async function initialize() {
 
     await populateSelectors();
 
+    initializeCustomerSelector();
     configureEvents();
     startAppointmentsListener();
 
@@ -99,6 +103,22 @@ async function initialize() {
       "No se pudo iniciar el administrador."
     );
   }
+}
+
+/* =====================================================
+   SELECTOR DE CLIENTES
+===================================================== */
+
+function initializeCustomerSelector() {
+  if (customerSelector) {
+    return;
+  }
+
+  customerSelector = createCustomerSelector({
+    nameInput,
+    phoneInput,
+    container: customerDetection
+  });
 }
 
 /* =====================================================
@@ -291,60 +311,6 @@ async function refreshCustomerCount() {
   }
 }
 
-async function detectCustomer() {
-  const phone = phoneInput.value.trim();
-
-  const lookupVersion = ++customerLookupVersion;
-
-  if (phone.replace(/\D/g, "").length < 7) {
-    customerDetection.replaceChildren();
-    return;
-  }
-
-  customerDetection.textContent = "Buscando cliente...";
-
-  try {
-    const customer = await findCustomerByPhone(phone);
-
-    if (
-      lookupVersion !== customerLookupVersion ||
-      phoneInput.value.trim() !== phone
-    ) {
-      return;
-    }
-
-    if (customer) {
-      nameInput.value = customer.name || "";
-
-      customerDetection.innerHTML = `
-        <div class="customer-found">
-          ✓ Cliente encontrado:
-          <strong>${escapeHTML(customer.name)}</strong>
-          · ${Number(customer.visits) || 0} visitas
-        </div>
-      `;
-
-    } else {
-      customerDetection.innerHTML = `
-        <div class="customer-new">
-          Cliente nuevo. Se registrará en Firebase.
-        </div>
-      `;
-    }
-
-  } catch (error) {
-    console.error(
-      "Error al buscar cliente:",
-      error
-    );
-
-    if (lookupVersion === customerLookupVersion) {
-      customerDetection.textContent =
-        "No se pudo consultar el cliente.";
-    }
-  }
-}
-
 /* =====================================================
    EVENTOS
 ===================================================== */
@@ -365,7 +331,10 @@ function configureEvents() {
   document.getElementById("saveAppointmentButton")
     .addEventListener("click", saveAppointment);
 
-  phoneInput.addEventListener("input", detectCustomer);
+  /*
+   * El selector administra las búsquedas
+   * por nombre y teléfono.
+   */
 
   barberSelect.addEventListener("change", () => {
     updateServiceOptions();
@@ -519,7 +488,7 @@ async function openModal() {
     modal.classList.remove("hidden");
 
     setTimeout(() => {
-      phoneInput.focus();
+      nameInput.focus();
     }, 50);
 
   } catch (error) {
@@ -538,19 +507,15 @@ async function openModal() {
 }
 
 function closeModal() {
-  ++customerLookupVersion;
-
   modal.classList.add("hidden");
 }
 
 async function resetForm() {
-  ++customerLookupVersion;
-
   phoneInput.value = "";
   nameInput.value = "";
   notesInput.value = "";
 
-  customerDetection.replaceChildren();
+  customerSelector?.reset();
 
   originSelect.value = "whatsapp";
 
@@ -811,8 +776,19 @@ async function saveAppointment() {
     return;
   }
 
-  if (phone.replace(/\D/g, "").length < 7) {
-    showToast("Ingresa un teléfono válido.");
+  const phoneDigits = phone.replace(/\D/g, "");
+
+  if (
+    phone &&
+    (
+      phoneDigits.length < 7 ||
+      phoneDigits.length > 15
+    )
+  ) {
+    showToast(
+      "El teléfono debe tener entre 7 y 15 dígitos, o dejarse vacío."
+    );
+
     phoneInput.focus();
     return;
   }
@@ -861,17 +837,6 @@ async function saveAppointment() {
     return;
   }
 
-  const appointment = {
-    clientName: name,
-    phone,
-    date,
-    time: selectedTime,
-    barberId: barber.id,
-    serviceId: service.id,
-    origin: originSelect.value,
-    notes: notesInput.value.trim()
-  };
-
   const button = document.getElementById(
     "saveAppointmentButton"
   );
@@ -879,42 +844,57 @@ async function saveAppointment() {
   savingAppointment = true;
   button.disabled = true;
 
-  let appointmentCreated = false;
-
   try {
+    if (!customerSelector) {
+      throw new Error(
+        "No se pudo iniciar el selector de clientes."
+      );
+    }
+
+    /*
+     * Resolver el cliente ANTES de crear
+     * la cita. Esto garantiza customerId.
+     */
+    const customer = await customerSelector.resolve();
+
+    if (!customer?.id) {
+      throw new Error(
+        "No se pudo identificar al cliente."
+      );
+    }
+
+    const appointment = {
+      customerId: customer.id,
+      clientName: customer.name,
+      phone: customer.phone || "",
+      date,
+      time: selectedTime,
+      barberId: barber.id,
+      serviceId: service.id,
+      origin: originSelect.value,
+      notes: notesInput.value.trim()
+    };
+
     await createAppointment(appointment);
-
-    appointmentCreated = true;
-
-    await getOrCreateCustomer(name, phone);
 
     closeModal();
 
     await refreshCustomerCount();
 
     showToast(
-      `Cita de ${name} y cliente registrados en Firebase.`
+      `Cita de ${customer.name} registrada correctamente.`
     );
 
   } catch (error) {
     console.error(
-      "Error al guardar:",
+      "Error al guardar la cita:",
       error
     );
 
-    if (appointmentCreated) {
-      closeModal();
-
-      showToast(
-        "La cita se guardó, pero falló el registro del cliente."
-      );
-
-    } else {
-      showToast(
-        error.message ||
-        "No se pudo registrar la cita."
-      );
-    }
+    showToast(
+      error.message ||
+      "No se pudo registrar la cita."
+    );
 
   } finally {
     savingAppointment = false;

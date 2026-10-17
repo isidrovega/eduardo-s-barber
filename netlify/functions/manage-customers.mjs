@@ -1,416 +1,1051 @@
 
 import {
-    initializeApp,
-    cert,
-    getApps
+  initializeApp,
+  getApps,
+  cert
 } from "firebase-admin/app";
 
 import {
-    getAuth
+  getAuth
 } from "firebase-admin/auth";
 
 import {
-    getFirestore
+  getFirestore
 } from "firebase-admin/firestore";
 
-/* =====================================================
-   CONFIGURACIÓN
-===================================================== */
+/* =========================================================
+   EDUARDO'S BARBERSHOP
+   GESTIÓN SEGURA DE CLIENTES
 
-const ADMIN_UID = "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2";
+   Acciones:
+   - find
+   - get
+   - search
+   - save
 
-const MAX_BODY_BYTES = 4096;
+   Características:
+   - Autenticación Firebase
+   - Administradores y barberos autorizados
+   - customerId permanente
+   - Teléfono opcional
+   - Teléfonos únicos mediante transacciones
+   - Compatibilidad con clientes históricos
+   - Agregar teléfono a un cliente existente
+   - No fusionar clientes automáticamente
+   - No modificar nombres desde las citas
+========================================================= */
 
-/* =====================================================
-   FIREBASE ADMIN
-===================================================== */
+const ADMIN_UIDS = new Set([
+  "5Dt5IvBhLZgEJ7cgLQ1dIwuQKZx2",
+  "KcHcm82nZESqoHy7RrHZdyj1y2p2"
+]);
 
-function getFirebase() {
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+const MAX_BODY_BYTES = 8192;
+const MAX_SEARCH_RESULTS = 30;
 
-    const privateKey = (
-        process.env.FIREBASE_PRIVATE_KEY || ""
-    )
-        .trim()
-        .replace(/^["']|["']$/g, "")
-        .replace(/\\n/g, "\n")
-        .trim();
-
-    if (!projectId || !clientEmail || !privateKey) {
-        throw new Error(
-            "Falta la configuración privada de Firebase."
-        );
-    }
-
-    const app = getApps()[0] || initializeApp({
-        credential: cert({
-            projectId,
-            clientEmail,
-            privateKey
-        })
-    });
-
-    return {
-        auth: getAuth(app),
-        db: getFirestore(app)
-    };
-}
-
-/* =====================================================
-   RESPUESTAS
-===================================================== */
+/* =========================================================
+   ERRORES
+========================================================= */
 
 class AppError extends Error {
-    constructor(status, message) {
-        super(message);
-        this.name = "AppError";
-        this.status = status;
-    }
+  constructor(message, status = 400) {
+    super(message);
+    this.name = "AppError";
+    this.status = status;
+  }
 }
 
-function json(status, data) {
-    return new Response(
-        JSON.stringify(data),
-        {
-            status,
-            headers: {
-                "Content-Type": "application/json",
-                "Cache-Control": "no-store",
-                "Allow": "POST"
-            }
-        }
-    );
+/* =========================================================
+   RESPUESTAS
+========================================================= */
+
+function json(statusCode, data) {
+  return {
+    statusCode,
+    headers: {
+      "Content-Type":
+        "application/json; charset=utf-8",
+      "Cache-Control": "no-store"
+    },
+    body: JSON.stringify(data)
+  };
 }
 
-/* =====================================================
-   VALIDACIONES
-===================================================== */
+/* =========================================================
+   FIREBASE ADMIN
+========================================================= */
 
-function normalizePhone(phone) {
-    if (typeof phone !== "string") {
-        throw new AppError(
-            400,
-            "El teléfono no es válido."
-        );
-    }
+function getFirebase() {
+  if (!getApps().length) {
+    const projectId =
+      process.env.FIREBASE_PROJECT_ID;
 
-    const normalized = phone.replace(/\D/g, "");
+    const clientEmail =
+      process.env.FIREBASE_CLIENT_EMAIL;
+
+    const privateKey =
+      process.env.FIREBASE_PRIVATE_KEY;
 
     if (
-        normalized.length < 7 ||
-        normalized.length > 15
+      !projectId ||
+      !clientEmail ||
+      !privateKey
     ) {
-        throw new AppError(
-            400,
-            "El teléfono debe tener entre 7 y 15 dígitos."
-        );
+      throw new AppError(
+        "Falta la configuración de Firebase.",
+        500
+      );
     }
 
-    return normalized;
-}
-
-function normalizeName(name) {
-    if (typeof name !== "string") {
-        throw new AppError(
-            400,
-            "El nombre no es válido."
-        );
-    }
-
-    const normalized = name.trim();
-
-    if (
-        normalized.length < 2 ||
-        normalized.length > 120
-    ) {
-        throw new AppError(
-            400,
-            "El nombre debe tener entre 2 y 120 caracteres."
-        );
-    }
-
-    return normalized;
-}
-
-/* =====================================================
-   AUTENTICACIÓN Y AUTORIZACIÓN
-===================================================== */
-
-async function getIdentity(request, auth, db) {
-    const authorization =
-        request.headers.get("authorization") || "";
-
-    const match = authorization.match(
-        /^Bearer\s+(.+)$/i
-    );
-
-    if (!match) {
-        throw new AppError(
-            401,
-            "Debes iniciar sesión."
-        );
-    }
-
-    let decoded;
-
-    try {
-        decoded = await auth.verifyIdToken(
-            match[1],
-            true
-        );
-    } catch {
-        throw new AppError(
-            401,
-            "La sesión no es válida o ha expirado."
-        );
-    }
-
-    if (decoded.uid === ADMIN_UID) {
-        return {
-            uid: decoded.uid,
-            role: "admin"
-        };
-    }
-
-    const profileSnapshot = await db
-        .collection("users")
-        .doc(decoded.uid)
-        .get();
-
-    if (!profileSnapshot.exists) {
-        throw new AppError(
-            403,
-            "No tienes autorización."
-        );
-    }
-
-    const profile = profileSnapshot.data();
-
-    if (
-        profile.role !== "barber" ||
-        profile.active !== true ||
-        typeof profile.barberId !== "string" ||
-        !profile.barberId
-    ) {
-        throw new AppError(
-            403,
-            "Tu cuenta de barbero no está activa."
-        );
-    }
-
-    const barberSnapshot = await db
-        .collection("barbers")
-        .doc(profile.barberId)
-        .get();
-
-    if (
-        !barberSnapshot.exists ||
-        barberSnapshot.data().status !== "active"
-    ) {
-        throw new AppError(
-            403,
-            "El barbero no está activo."
-        );
-    }
-
-    return {
-        uid: decoded.uid,
-        role: "barber",
-        barberId: profile.barberId
-    };
-}
-
-/* =====================================================
-   BUSCAR CLIENTE
-===================================================== */
-
-async function findCustomer(db, phone) {
-    const normalizedPhone =
-        normalizePhone(phone);
-
-    const snapshot = await db
-        .collection("customers")
-        .where(
-            "normalizedPhone",
-            "==",
-            normalizedPhone
+    initializeApp({
+      credential: cert({
+        projectId,
+        clientEmail,
+        privateKey: privateKey.replace(
+          /\\n/g,
+          "\n"
         )
-        .limit(1)
-        .get();
+      })
+    });
+  }
 
-    if (snapshot.empty) {
-        return null;
-    }
-
-    const document = snapshot.docs[0];
-    const customer = document.data();
-
-    /*
-       Solo devolvemos los datos necesarios
-       para el formulario del barbero.
-    */
-
-    return {
-        id: document.id,
-        name: customer.name || "",
-        phone: customer.phone || "",
-        visits: Number(customer.visits) || 0
-    };
+  return {
+    auth: getAuth(),
+    db: getFirestore()
+  };
 }
 
-/* =====================================================
-   REGISTRAR CLIENTE
-===================================================== */
+/* =========================================================
+   NORMALIZACIÓN
+========================================================= */
 
-async function saveCustomer(db, name, phone) {
-    const cleanName = normalizeName(name);
-    const normalizedPhone =
-        normalizePhone(phone);
+function normalizePhone(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return "";
+  }
 
-    const existing = await findCustomer(
+  if (typeof value !== "string") {
+    throw new AppError(
+      "El teléfono no es válido."
+    );
+  }
+
+  const phone = value.replace(/\D/g, "");
+
+  if (
+    phone.length < 7 ||
+    phone.length > 15
+  ) {
+    throw new AppError(
+      "El teléfono debe tener entre 7 y 15 dígitos."
+    );
+  }
+
+  return phone;
+}
+
+function normalizeName(value) {
+  if (typeof value !== "string") {
+    throw new AppError(
+      "Ingresa el nombre del cliente."
+    );
+  }
+
+  const name = value
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (
+    name.length < 2 ||
+    name.length > 120
+  ) {
+    throw new AppError(
+      "El nombre debe tener entre 2 y 120 caracteres."
+    );
+  }
+
+  return name;
+}
+
+function normalizeSearch(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("es");
+}
+
+function validId(value) {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= 150 &&
+    !value.includes("/")
+  );
+}
+
+/* =========================================================
+   DATOS PÚBLICOS DEL CLIENTE
+========================================================= */
+
+function publicCustomer(snapshot) {
+  if (!snapshot.exists) {
+    return null;
+  }
+
+  const data = snapshot.data();
+
+  return {
+    id: snapshot.id,
+    name: data.name || "",
+    phone: data.phone || "",
+    visits: Number(data.visits) || 0,
+    createdAt: data.createdAt || null,
+    updatedAt: data.updatedAt || null
+  };
+}
+
+/* =========================================================
+   AUTORIZACIÓN
+========================================================= */
+
+async function getIdentity(auth, db, event) {
+  const header =
+    event.headers?.authorization ||
+    event.headers?.Authorization ||
+    "";
+
+  const match = header.match(
+    /^Bearer\s+(.+)$/i
+  );
+
+  if (!match) {
+    throw new AppError(
+      "Inicia sesión para continuar.",
+      401
+    );
+  }
+
+  let decoded;
+
+  try {
+    decoded = await auth.verifyIdToken(
+      match[1],
+      true
+    );
+  } catch {
+    throw new AppError(
+      "La sesión no es válida.",
+      401
+    );
+  }
+
+  if (ADMIN_UIDS.has(decoded.uid)) {
+    return {
+      uid: decoded.uid,
+      role: "admin"
+    };
+  }
+
+  const userSnapshot = await db
+    .collection("users")
+    .doc(decoded.uid)
+    .get();
+
+  if (!userSnapshot.exists) {
+    throw new AppError(
+      "Acceso no autorizado.",
+      403
+    );
+  }
+
+  const user = userSnapshot.data();
+
+  if (
+    user.role !== "barber" ||
+    user.active !== true ||
+    !validId(user.barberId)
+  ) {
+    throw new AppError(
+      "Acceso no autorizado.",
+      403
+    );
+  }
+
+  const barberSnapshot = await db
+    .collection("barbers")
+    .doc(user.barberId)
+    .get();
+
+  if (
+    !barberSnapshot.exists ||
+    barberSnapshot.data().status !== "active"
+  ) {
+    throw new AppError(
+      "El barbero no está activo.",
+      403
+    );
+  }
+
+  return {
+    uid: decoded.uid,
+    role: "barber",
+    barberId: user.barberId
+  };
+}
+
+/* =========================================================
+   REFERENCIA ÚNICA POR TELÉFONO
+========================================================= */
+
+function phoneReference(db, phone) {
+  return db
+    .collection("customerPhones")
+    .doc(phone);
+}
+
+/* =========================================================
+   BUSCAR TELÉFONO HISTÓRICO
+
+   Comprueba normalizedPhone y phone.
+
+   La segunda consulta se realiza para detectar
+   registros antiguos que no tengan el campo
+   normalizedPhone.
+========================================================= */
+
+async function findLegacyPhoneOwners(db, phone) {
+  const customers = db.collection("customers");
+
+  const normalizedSnapshot = await customers
+    .where(
+      "normalizedPhone",
+      "==",
+      phone
+    )
+    .get();
+
+  const owners = new Map();
+
+  for (const snapshot of normalizedSnapshot.docs) {
+    owners.set(
+      snapshot.id,
+      snapshot
+    );
+  }
+
+  /*
+   * Para preservar compatibilidad con clientes
+   * históricos, también revisar los documentos
+   * cuyo teléfono todavía no está normalizado.
+   *
+   * Esta lectura completa puede resultar costosa
+   * en bases de datos grandes. Se debe retirar
+   * después de migrar los registros antiguos.
+   */
+  const allSnapshot = await customers.get();
+
+  for (const snapshot of allSnapshot.docs) {
+    const data = snapshot.data();
+
+    const storedPhone = String(
+      data.normalizedPhone ||
+      data.phone ||
+      ""
+    ).replace(/\D/g, "");
+
+    if (storedPhone === phone) {
+      owners.set(
+        snapshot.id,
+        snapshot
+      );
+    }
+  }
+
+  return [...owners.values()];
+}
+
+/* =========================================================
+   BUSCAR POR TELÉFONO
+========================================================= */
+
+async function findByPhone(db, phone) {
+  const normalizedPhone =
+    normalizePhone(phone);
+
+  if (!normalizedPhone) {
+    return null;
+  }
+
+  const owners = await findLegacyPhoneOwners(
+    db,
+    normalizedPhone
+  );
+
+  if (owners.length > 1) {
+    throw new AppError(
+      "Hay varios clientes con este teléfono. " +
+      "Solicita al administrador revisar las fichas.",
+      409
+    );
+  }
+
+  const indexedSnapshot = await phoneReference(
+    db,
+    normalizedPhone
+  ).get();
+
+  if (indexedSnapshot.exists) {
+    const indexedCustomerId =
+      indexedSnapshot.data()?.customerId;
+
+    if (!validId(indexedCustomerId)) {
+      throw new AppError(
+        "El índice del teléfono es inválido.",
+        409
+      );
+    }
+
+    if (
+      owners.length === 1 &&
+      owners[0].id !== indexedCustomerId
+    ) {
+      throw new AppError(
+        "El teléfono tiene registros inconsistentes. " +
+        "Solicita una revisión administrativa.",
+        409
+      );
+    }
+
+    const customerSnapshot = await db
+      .collection("customers")
+      .doc(indexedCustomerId)
+      .get();
+
+    if (!customerSnapshot.exists) {
+      throw new AppError(
+        "El teléfono apunta a una ficha inexistente.",
+        409
+      );
+    }
+
+    return publicCustomer(
+      customerSnapshot
+    );
+  }
+
+  return owners.length === 1
+    ? publicCustomer(owners[0])
+    : null;
+}
+
+/* =========================================================
+   BUSCAR POR ID
+========================================================= */
+
+async function getById(db, id) {
+  if (!validId(id)) {
+    throw new AppError(
+      "Identificador inválido."
+    );
+  }
+
+  const snapshot = await db
+    .collection("customers")
+    .doc(id)
+    .get();
+
+  return publicCustomer(snapshot);
+}
+
+/* =========================================================
+   BUSCAR POR NOMBRE O TELÉFONO
+========================================================= */
+
+async function searchCustomers(db, text) {
+  const term = normalizeSearch(text);
+
+  if (term.length < 2) {
+    return [];
+  }
+
+  if (term.length > 120) {
+    throw new AppError(
+      "Búsqueda demasiado larga."
+    );
+  }
+
+  const phoneTerm = term.replace(
+    /\D/g,
+    ""
+  );
+
+  const snapshot = await db
+    .collection("customers")
+    .get();
+
+  return snapshot.docs
+    .filter(document => {
+      const data = document.data();
+
+      const nameMatches =
+        normalizeSearch(
+          data.name
+        ).includes(term);
+
+      const storedPhone = String(
+        data.normalizedPhone ||
+        data.phone ||
+        ""
+      ).replace(/\D/g, "");
+
+      const phoneMatches =
+        phoneTerm.length >= 2 &&
+        storedPhone.includes(phoneTerm);
+
+      return (
+        nameMatches ||
+        phoneMatches
+      );
+    })
+    .slice(0, MAX_SEARCH_RESULTS)
+    .map(publicCustomer);
+}
+
+/* =========================================================
+   ACTUALIZAR CLIENTE EXISTENTE
+========================================================= */
+
+async function updateExistingCustomer(
+  db,
+  customerId,
+  name,
+  normalizedPhone,
+  originalPhone
+) {
+  const reference = db
+    .collection("customers")
+    .doc(customerId);
+
+  /*
+   * Verificar que el teléfono no esté registrado
+   * en otra ficha histórica.
+   */
+  if (normalizedPhone) {
+    const owners = await findLegacyPhoneOwners(
+      db,
+      normalizedPhone
+    );
+
+    if (
+      owners.some(
+        owner => owner.id !== customerId
+      )
+    ) {
+      throw new AppError(
+        "Este teléfono pertenece a otro cliente.",
+        409
+      );
+    }
+  }
+
+  const phoneRef = normalizedPhone
+    ? phoneReference(
         db,
-        phone
+        normalizedPhone
+      )
+    : null;
+
+  const now = new Date().toISOString();
+
+  await db.runTransaction(
+    async transaction => {
+      /*
+       * Todas las lecturas de la transacción
+       * deben realizarse antes de escribir.
+       */
+      const customerSnapshot =
+        await transaction.get(reference);
+
+      if (!customerSnapshot.exists) {
+        throw new AppError(
+          "No se encontró el cliente.",
+          404
+        );
+      }
+
+      const phoneSnapshot = phoneRef
+        ? await transaction.get(phoneRef)
+        : null;
+
+      const previous =
+        customerSnapshot.data();
+
+      const previousPhone = String(
+        previous.normalizedPhone ||
+        previous.phone ||
+        ""
+      ).replace(/\D/g, "");
+
+      /*
+       * No permitir cambiar un teléfono
+       * ya registrado desde el formulario
+       * de citas.
+       */
+      if (
+        previousPhone &&
+        normalizedPhone &&
+        previousPhone !== normalizedPhone
+      ) {
+        throw new AppError(
+          "Para cambiar un teléfono existente, " +
+          "utiliza el proceso de corrección de datos.",
+          409
+        );
+      }
+
+      if (
+        phoneSnapshot?.exists &&
+        phoneSnapshot.data()?.customerId !==
+          customerId
+      ) {
+        throw new AppError(
+          "Este teléfono pertenece a otro cliente.",
+          409
+        );
+      }
+
+      const changes = {};
+
+      /*
+       * Solo agregar teléfono si la ficha
+       * todavía no tenía uno.
+       */
+      if (
+        normalizedPhone &&
+        !previousPhone
+      ) {
+        changes.phone =
+          String(originalPhone).trim();
+
+        changes.normalizedPhone =
+          normalizedPhone;
+      }
+
+      /*
+       * Corregir índice faltante sin cambiar
+       * los datos del cliente.
+       */
+      if (
+        normalizedPhone &&
+        previousPhone === normalizedPhone &&
+        !previous.normalizedPhone
+      ) {
+        changes.normalizedPhone =
+          normalizedPhone;
+      }
+
+      if (
+        phoneRef &&
+        !phoneSnapshot.exists
+      ) {
+        transaction.create(
+          phoneRef,
+          {
+            customerId,
+            createdAt: now
+          }
+        );
+      }
+
+      /*
+       * No sobrescribir nombres ni visitas
+       * desde un formulario de citas.
+       */
+      if (
+        Object.keys(changes).length > 0
+      ) {
+        changes.updatedAt = now;
+
+        transaction.update(
+          reference,
+          changes
+        );
+      }
+    }
+  );
+
+  const updated = await reference.get();
+
+  return {
+    customer: publicCustomer(updated),
+    created: false
+  };
+}
+
+/* =========================================================
+   CREAR CLIENTE NUEVO
+========================================================= */
+
+async function createNewCustomer(
+  db,
+  name,
+  normalizedPhone,
+  originalPhone
+) {
+  /*
+   * Detectar registros históricos antes de
+   * crear una ficha nueva.
+   */
+  if (normalizedPhone) {
+    const existing = await findByPhone(
+      db,
+      normalizedPhone
     );
 
     if (existing) {
-        /*
-           No sobrescribimos automáticamente
-           los datos del cliente existente.
-        */
+      return {
+        customer: existing,
+        created: false
+      };
+    }
+  }
+
+  /*
+   * Evitar duplicados exactos por nombre
+   * cuando no hay teléfono que distinga
+   * a los clientes.
+   *
+   * No se fusionan fichas automáticamente.
+   */
+  const matches = await searchCustomers(
+    db,
+    name
+  );
+
+  const exactMatches = matches.filter(
+    customer =>
+      normalizeSearch(customer.name) ===
+      normalizeSearch(name)
+  );
+
+  if (exactMatches.length) {
+    throw new AppError(
+      "Ya existe un cliente con ese nombre. " +
+      "Selecciona su ficha antes de continuar. " +
+      "Si es otra persona, utiliza un nombre distintivo.",
+      409
+    );
+  }
+
+  const reference = db
+    .collection("customers")
+    .doc();
+
+  const phoneRef = normalizedPhone
+    ? phoneReference(
+        db,
+        normalizedPhone
+      )
+    : null;
+
+  const now = new Date().toISOString();
+
+  const customer = {
+    id: reference.id,
+    name,
+    phone: normalizedPhone
+      ? String(originalPhone).trim()
+      : "",
+    normalizedPhone,
+    visits: 0,
+    createdAt: now,
+    updatedAt: now
+  };
+
+  const result = await db.runTransaction(
+    async transaction => {
+      /*
+       * Comprobar la reserva única dentro
+       * de la misma transacción.
+       */
+      const phoneSnapshot = phoneRef
+        ? await transaction.get(phoneRef)
+        : null;
+
+      if (phoneSnapshot?.exists) {
+        const existingId =
+          phoneSnapshot.data()?.customerId;
+
+        if (!validId(existingId)) {
+          throw new AppError(
+            "El índice del teléfono es inválido.",
+            409
+          );
+        }
+
+        const existingReference = db
+          .collection("customers")
+          .doc(existingId);
+
+        const existingSnapshot =
+          await transaction.get(
+            existingReference
+          );
+
+        if (!existingSnapshot.exists) {
+          throw new AppError(
+            "El teléfono apunta a una ficha inexistente.",
+            409
+          );
+        }
 
         return {
-            customer: existing,
-            created: false
+          existing: publicCustomer(
+            existingSnapshot
+          )
         };
+      }
+
+      transaction.create(
+        reference,
+        customer
+      );
+
+      if (phoneRef) {
+        transaction.create(
+          phoneRef,
+          {
+            customerId: reference.id,
+            createdAt: now
+          }
+        );
+      }
+
+      return {
+        existing: null
+      };
     }
+  );
 
-    const reference = db
-        .collection("customers")
-        .doc();
-
-    const customer = {
-        id: reference.id,
-        name: cleanName,
-        phone: phone.trim(),
-        normalizedPhone,
-        visits: 0,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    };
-
-    await reference.set(customer);
-
+  if (result.existing) {
     return {
-        customer: {
-            id: customer.id,
-            name: customer.name,
-            phone: customer.phone,
-            visits: customer.visits
-        },
-        created: true
+      customer: result.existing,
+      created: false
     };
+  }
+
+  return {
+    customer,
+    created: true
+  };
 }
 
-/* =====================================================
-   FUNCIÓN PRINCIPAL
-===================================================== */
+/* =========================================================
+   GUARDAR CLIENTE
+========================================================= */
 
-export default async function handler(request) {
-    if (request.method !== "POST") {
-        return json(405, {
-            error: "Método no permitido."
-        });
+async function saveCustomer(db, input) {
+  const name = normalizeName(
+    input.name
+  );
+
+  const normalizedPhone = normalizePhone(
+    input.phone
+  );
+
+  const customerId =
+    input.customerId || null;
+
+  if (
+    customerId &&
+    !validId(customerId)
+  ) {
+    throw new AppError(
+      "El identificador del cliente es inválido."
+    );
+  }
+
+  /*
+   * Si existe customerId, actualizar esa ficha.
+   * Nunca crear otra automáticamente.
+   */
+  if (customerId) {
+    return updateExistingCustomer(
+      db,
+      customerId,
+      name,
+      normalizedPhone,
+      input.phone || ""
+    );
+  }
+
+  return createNewCustomer(
+    db,
+    name,
+    normalizedPhone,
+    input.phone || ""
+  );
+}
+
+/* =========================================================
+   LEER SOLICITUD
+========================================================= */
+
+async function parseBody(event) {
+  const raw = event.body || "";
+
+  if (
+    Buffer.byteLength(
+      raw,
+      "utf8"
+    ) > MAX_BODY_BYTES
+  ) {
+    throw new AppError(
+      "La solicitud es demasiado grande.",
+      413
+    );
+  }
+
+  try {
+    const body = JSON.parse(raw);
+
+    if (
+      !body ||
+      typeof body !== "object" ||
+      Array.isArray(body)
+    ) {
+      throw new Error(
+        "Formato inválido"
+      );
     }
 
-    try {
-        const { auth, db } = getFirebase();
+    return body;
 
-        /*
-           Verificamos la identidad antes de
-           consultar cualquier información.
-        */
+  } catch {
+    throw new AppError(
+      "El contenido de la solicitud no es válido."
+    );
+  }
+}
 
-        const identity = await getIdentity(
-            request,
-            auth,
-            db
+/* =========================================================
+   NETLIFY HANDLER
+========================================================= */
+
+export async function handler(event) {
+  if (event.httpMethod !== "POST") {
+    return json(
+      405,
+      {
+        ok: false,
+        error: "Método no permitido."
+      }
+    );
+  }
+
+  try {
+    const { auth, db } = getFirebase();
+
+    await getIdentity(
+      auth,
+      db,
+      event
+    );
+
+    const body = await parseBody(
+      event
+    );
+
+    switch (body.action) {
+      case "find": {
+        const customer = await findByPhone(
+          db,
+          body.phone
         );
 
-        const rawBody = await request.text();
+        return json(
+          200,
+          {
+            ok: true,
+            customer
+          }
+        );
+      }
 
-        if (
-            new TextEncoder().encode(rawBody).length >
-            MAX_BODY_BYTES
-        ) {
-            throw new AppError(
-                413,
-                "La solicitud es demasiado grande."
-            );
-        }
+      case "get": {
+        const customer = await getById(
+          db,
+          body.customerId
+        );
 
-        let body;
+        return json(
+          200,
+          {
+            ok: true,
+            customer
+          }
+        );
+      }
 
-        try {
-            body = JSON.parse(rawBody);
-        } catch {
-            throw new AppError(
-                400,
-                "La solicitud no contiene JSON válido."
-            );
-        }
+      case "search": {
+        const customers = await searchCustomers(
+          db,
+          body.query
+        );
 
-        if (
-            !body ||
-            typeof body !== "object" ||
-            Array.isArray(body)
-        ) {
-            throw new AppError(
-                400,
-                "La solicitud no es válida."
-            );
-        }
+        return json(
+          200,
+          {
+            ok: true,
+            customers
+          }
+        );
+      }
 
-        if (body.action === "find") {
-            const customer = await findCustomer(
-                db,
-                body.phone
-            );
+      case "save": {
+        const result = await saveCustomer(
+          db,
+          body
+        );
 
-            return json(200, {
-                customer
-            });
-        }
+        return json(
+          200,
+          {
+            ok: true,
+            ...result
+          }
+        );
+      }
 
-        if (body.action === "save") {
-            const result = await saveCustomer(
-                db,
-                body.name,
-                body.phone
-            );
-
-            return json(200, result);
-        }
-
+      default:
         throw new AppError(
-            400,
-            "Acción no válida."
+          "Acción no reconocida."
         );
-
-    } catch (error) {
-        if (error instanceof AppError) {
-            return json(error.status, {
-                error: error.message
-            });
-        }
-
-        console.error(
-            "Error en manage-customers:",
-            error
-        );
-
-        return json(500, {
-            error: "No se pudo procesar el cliente."
-        });
     }
+
+  } catch (error) {
+    console.error(
+      "manage-customers:",
+      error
+    );
+
+    return json(
+      error instanceof AppError
+        ? error.status
+        : 500,
+      {
+        ok: false,
+        error:
+          error instanceof AppError
+            ? error.message
+            : "Error interno al gestionar clientes."
+      }
+    );
+  }
 }
