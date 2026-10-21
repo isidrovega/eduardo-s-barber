@@ -18,12 +18,26 @@ import { auth } from "./firebase.js";
    - Validaciones básicas
    - Manejo de errores
    - Tiempo máximo de espera
+   - Método de pago al completar citas
 ========================================================= */
 
 const ENDPOINT =
   "/.netlify/functions/manage-appointments";
 
 const REQUEST_TIMEOUT_MS = 20000;
+
+const VALID_STATUSES = new Set([
+  "pending",
+  "confirmed",
+  "completed",
+  "no-show"
+]);
+
+const VALID_PAYMENT_METHODS = new Set([
+  "cash",
+  "card",
+  "transfer"
+]);
 
 /* =========================================================
    VALIDACIONES
@@ -156,6 +170,7 @@ function prepareAppointment(
   /*
    * No convertir identificadores
    * ni sobrescribir otros campos.
+   *
    * El servidor valida horarios,
    * servicios, permisos y conflictos.
    */
@@ -371,35 +386,62 @@ export async function cancelAppointment(
 /* =========================================================
    CAMBIAR ESTADO DE CITA
 
-   Estados permitidos por el servidor:
+   Estados:
    - pending
    - confirmed
    - completed
    - no-show
+
+   Método de pago al completar:
+   - cash      (Efectivo)
+   - card      (Tarjeta)
+   - transfer  (Transferencia)
 ========================================================= */
 
 export async function changeAppointmentStatus(
   id,
-  status
+  status,
+  paymentMethod = null
 ) {
   requireId(
     id,
     "ID de cita"
   );
 
-  const validStatuses = new Set([
-    "pending",
-    "confirmed",
-    "completed",
-    "no-show"
-  ]);
-
-  if (!validStatuses.has(status)) {
+  if (!VALID_STATUSES.has(status)) {
     throw new Error(
       "Estado de cita inválido."
     );
   }
 
+  /*
+   * El método de pago es obligatorio
+   * únicamente al completar una cita.
+   */
+  if (status === "completed") {
+    if (
+      !VALID_PAYMENT_METHODS.has(
+        paymentMethod
+      )
+    ) {
+      throw new Error(
+        "Selecciona cómo pagó el cliente: " +
+        "efectivo, tarjeta o transferencia."
+      );
+    }
+
+    return sendAppointmentRequest({
+      action: "status",
+      id,
+      status,
+      paymentMethod
+    });
+  }
+
+  /*
+   * Los demás cambios de estado
+   * no requieren método de pago.
+   */
   return sendAppointmentRequest({
     action: "status",
     id,

@@ -30,6 +30,8 @@ import {
    - Protección contra horarios duplicados
    - Permisos de administradores y barberos
    - Zona horaria America/Mazatlan
+   - Método de pago obligatorio al completar
+   - Pago y estado guardados atómicamente
 ===================================================== */
 
 const ADMIN_UIDS = new Set([
@@ -70,6 +72,12 @@ const VALID_STATUSES = new Set([
   "confirmed",
   "completed",
   "no-show"
+]);
+
+const VALID_PAYMENT_METHODS = new Set([
+  "cash",
+  "card",
+  "transfer"
 ]);
 
 /* =====================================================
@@ -873,11 +881,6 @@ async function validateCustomerInTransaction(
     );
   }
 
-  /*
-   * Comparar nombres normalizados.
-   * Esto admite diferencias de acentos,
-   * mayúsculas y espacios.
-   */
   if (
     normalizeName(
       customer.name
@@ -963,10 +966,6 @@ async function createAppointment(
 
   await db.runTransaction(
     async transaction => {
-      /*
-       * Todas las lecturas antes
-       * de realizar escrituras.
-       */
       const [
         barberSnap,
         ...reservationSnaps
@@ -1146,10 +1145,6 @@ async function updateAppointment(
       const oldSlots =
         getExistingSlots(old);
 
-      /*
-       * No inventar reservas para citas
-       * antiguas sin occupiedSlots.
-       */
       if (oldSlots === null) {
         throw new AppError(
           409,
@@ -1157,9 +1152,6 @@ async function updateAppointment(
         );
       }
 
-      /*
-       * Mantener customerId permanente.
-       */
       if (
         old.customerId &&
         input.customerId &&
@@ -1310,10 +1302,6 @@ async function updateAppointment(
         )
       );
 
-      /*
-       * Comprobar propiedad de las
-       * reservas anteriores.
-       */
       for (const ref of oldRefs) {
         const snapshot =
           reservationByPath.get(
@@ -1331,9 +1319,6 @@ async function updateAppointment(
         }
       }
 
-      /*
-       * No ocupar reservas de otra cita.
-       */
       for (const ref of newRefs) {
         const snapshot =
           reservationByPath.get(
@@ -1467,11 +1452,6 @@ async function cancelAppointment(
           appointment
         );
 
-      /*
-       * Cita histórica sin reservas:
-       * cancelar sin borrar bloques
-       * que podrían ser de otra cita.
-       */
       if (oldSlots === null) {
         transaction.update(
           appointmentRef,
@@ -1537,14 +1517,15 @@ async function cancelAppointment(
 }
 
 /* =====================================================
-   CAMBIAR ESTADO
+   CAMBIAR ESTADO Y REGISTRAR PAGO
 ===================================================== */
 
 async function changeAppointmentStatus(
   db,
   identity,
   id,
-  newStatus
+  newStatus,
+  paymentMethod
 ) {
   requireValidId(
     id,
@@ -1568,6 +1549,18 @@ async function changeAppointmentStatus(
     throw new AppError(
       400,
       "Estado de cita inválido."
+    );
+  }
+
+  if (
+    newStatus === "completed" &&
+    !VALID_PAYMENT_METHODS.has(
+      paymentMethod
+    )
+  ) {
+    throw new AppError(
+      400,
+      "Selecciona un método de pago válido: efectivo, tarjeta o transferencia."
     );
   }
 
@@ -1601,10 +1594,6 @@ async function changeAppointmentStatus(
         return;
       }
 
-      /*
-       * No reactivar citas cuyas
-       * reservas fueron liberadas.
-       */
       if (
         previousStatus === "cancelled" ||
         previousStatus === "no-show" ||
@@ -1654,16 +1643,23 @@ async function changeAppointmentStatus(
         );
 
       /*
-       * Compatibilidad histórica:
-       * si no existen occupiedSlots,
-       * se permite cambiar el estado
-       * sin inventar ni borrar reservas.
+       * Citas históricas sin occupiedSlots.
+       * No se inventan ni eliminan reservas.
        */
       if (slots === null) {
         transaction.update(
           appointmentRef,
           {
             status: newStatus,
+
+            ...(newStatus === "completed"
+              ? {
+                  paymentMethod,
+                  paidAt:
+                    FieldValue.serverTimestamp()
+                }
+              : {}),
+
             updatedAt:
               FieldValue.serverTimestamp()
           }
@@ -1716,11 +1712,21 @@ async function changeAppointmentStatus(
         appointmentRef,
         {
           status: newStatus,
+
+          ...(newStatus === "completed"
+            ? {
+                paymentMethod,
+                paidAt:
+                  FieldValue.serverTimestamp()
+              }
+            : {}),
+
           ...(newStatus === "no-show"
             ? {
                 occupiedSlots: []
               }
             : {}),
+
           updatedAt:
             FieldValue.serverTimestamp()
         }
@@ -1845,7 +1851,8 @@ export default async function handler(request) {
           db,
           identity,
           body.id,
-          body.status
+          body.status,
+          body.paymentMethod
         );
         break;
 

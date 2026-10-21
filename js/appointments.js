@@ -48,6 +48,7 @@ let firebaseServices = [];
 let appointmentsLoaded = false;
 let savingAppointment = false;
 let openingAppointmentModal = false;
+let updatingAppointmentStatus = false;
 
 let unsubscribeAppointments = null;
 let toastTimer = null;
@@ -56,6 +57,12 @@ let customerSelector = null;
 let modalOpenVersion = 0;
 
 let syncingServiceOptions = false;
+
+const PAYMENT_METHOD_LABELS = {
+  cash: "Efectivo",
+  card: "Tarjeta",
+  transfer: "Transferencia"
+};
 
 /* =====================================================
    ELEMENTOS
@@ -76,6 +83,384 @@ const statusSelect = document.getElementById("appointmentStatus");
 const notesInput = document.getElementById("appointmentNotes");
 const timeContainer = document.getElementById("appointmentTimes");
 const customerDetection = document.getElementById("customerDetection");
+
+/* =====================================================
+   VENTANA DE MÉTODO DE PAGO
+
+   Se crea desde JavaScript para no modificar HTML.
+===================================================== */
+
+function initializePaymentDialog() {
+  if (document.getElementById("appointmentPaymentDialog")) {
+    return;
+  }
+
+  const style = document.createElement("style");
+
+  style.id = "appointmentPaymentDialogStyles";
+
+  style.textContent = `
+    #appointmentPaymentDialog {
+      width: min(440px, calc(100vw - 32px));
+      max-height: calc(100dvh - 32px);
+      margin: auto;
+      padding: 0;
+      border: 1px solid #d7a65c;
+      border-radius: 18px;
+      background: #171717;
+      color: #f5f0e8;
+      color-scheme: dark;
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .75);
+      overflow: auto;
+    }
+
+    #appointmentPaymentDialog::backdrop {
+      background: rgba(0, 0, 0, .82);
+      backdrop-filter: blur(4px);
+    }
+
+    #appointmentPaymentDialog .payment-dialog-content {
+      padding: 26px;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-title {
+      margin: 0 0 8px;
+      color: #d7a65c;
+      font-size: 1.35rem;
+      font-weight: 700;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-description {
+      margin: 0 0 22px;
+      color: #a7a7a7;
+      font-size: .95rem;
+      line-height: 1.5;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-client {
+      color: #f5f0e8;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+
+    #appointmentPaymentDialog .payment-options {
+      display: grid;
+      gap: 12px;
+      margin: 0 0 24px;
+    }
+
+    #appointmentPaymentDialog .payment-option {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 15px;
+      border: 1px solid #303030;
+      border-radius: 12px;
+      background: #202020;
+      color: #f5f0e8;
+      cursor: pointer;
+      transition:
+        border-color .2s ease,
+        background .2s ease;
+    }
+
+    #appointmentPaymentDialog .payment-option:hover {
+      border-color: #d7a65c;
+      background: #29241d;
+    }
+
+    #appointmentPaymentDialog .payment-option:has(input:checked) {
+      border-color: #d7a65c;
+      background: #30271b;
+    }
+
+    #appointmentPaymentDialog .payment-option input {
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      accent-color: #d7a65c;
+      flex-shrink: 0;
+    }
+
+    #appointmentPaymentDialog .payment-option span {
+      font-weight: 600;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-button {
+      min-height: 44px;
+      padding: 11px 16px;
+      border-radius: 10px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity .2s ease;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-button:hover {
+      opacity: .9;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-cancel {
+      border: 1px solid #444;
+      background: #202020;
+      color: #f5f0e8;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-save {
+      border: 1px solid #d7a65c;
+      background: #d7a65c;
+      color: #090909;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-error {
+      min-height: 0;
+      margin: 0;
+      color: #ff9999;
+      font-size: .88rem;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-error:not(:empty) {
+      margin-bottom: 14px;
+    }
+
+    #appointmentPaymentDialog .payment-dialog-button:focus-visible,
+    #appointmentPaymentDialog .payment-option:focus-within {
+      outline: 2px solid #f5d09a;
+      outline-offset: 3px;
+    }
+
+    .appointment-payment-label {
+      display: block;
+      margin-top: 6px;
+      color: #d7a65c;
+      font-size: .8rem;
+      font-weight: 600;
+    }
+
+    @media (max-width: 480px) {
+      #appointmentPaymentDialog .payment-dialog-content {
+        padding: 20px;
+      }
+
+      #appointmentPaymentDialog .payment-dialog-actions {
+        flex-direction: column-reverse;
+      }
+
+      #appointmentPaymentDialog .payment-dialog-button {
+        width: 100%;
+      }
+    }
+  `;
+
+  document.head.appendChild(style);
+
+  const dialog = document.createElement("dialog");
+
+  dialog.id = "appointmentPaymentDialog";
+
+  dialog.setAttribute(
+    "aria-labelledby",
+    "appointmentPaymentDialogTitle"
+  );
+
+  dialog.innerHTML = `
+    <div class="payment-dialog-content">
+      <h2
+        id="appointmentPaymentDialogTitle"
+        class="payment-dialog-title"
+      >
+        Completar cita
+      </h2>
+
+      <p class="payment-dialog-description">
+        ¿Cómo pagó
+        <span
+          id="appointmentPaymentClient"
+          class="payment-dialog-client"
+        ></span>?
+      </p>
+
+      <form id="appointmentPaymentForm">
+        <div
+          class="payment-options"
+          role="radiogroup"
+          aria-label="Método de pago"
+        >
+          <label class="payment-option">
+            <input
+              type="radio"
+              name="appointmentPaymentMethod"
+              value="cash"
+              required
+            >
+            <span>Efectivo</span>
+          </label>
+
+          <label class="payment-option">
+            <input
+              type="radio"
+              name="appointmentPaymentMethod"
+              value="card"
+            >
+            <span>Tarjeta</span>
+          </label>
+
+          <label class="payment-option">
+            <input
+              type="radio"
+              name="appointmentPaymentMethod"
+              value="transfer"
+            >
+            <span>Transferencia</span>
+          </label>
+        </div>
+
+        <p
+          id="appointmentPaymentError"
+          class="payment-dialog-error"
+          role="alert"
+        ></p>
+
+        <div class="payment-dialog-actions">
+          <button
+            id="cancelAppointmentPayment"
+            type="button"
+            class="payment-dialog-button payment-dialog-cancel"
+          >
+            Cancelar
+          </button>
+
+          <button
+            id="saveAppointmentPayment"
+            type="submit"
+            class="payment-dialog-button payment-dialog-save"
+          >
+            Completar y guardar
+          </button>
+        </div>
+      </form>
+    </div>
+  `;
+
+  document.body.appendChild(dialog);
+}
+
+function askPaymentMethod(appointment) {
+  initializePaymentDialog();
+
+  const dialog = document.getElementById(
+    "appointmentPaymentDialog"
+  );
+
+  const form = document.getElementById(
+    "appointmentPaymentForm"
+  );
+
+  const client = document.getElementById(
+    "appointmentPaymentClient"
+  );
+
+  const error = document.getElementById(
+    "appointmentPaymentError"
+  );
+
+  const cancelButton = document.getElementById(
+    "cancelAppointmentPayment"
+  );
+
+  client.textContent =
+    appointment.clientName || "el cliente";
+
+  form.reset();
+  error.textContent = "";
+
+  return new Promise(resolve => {
+    let resolved = false;
+
+    function finish(value) {
+      if (resolved) {
+        return;
+      }
+
+      resolved = true;
+
+      form.removeEventListener("submit", onSubmit);
+      cancelButton.removeEventListener("click", onCancel);
+      dialog.removeEventListener("cancel", onDialogCancel);
+      dialog.removeEventListener("close", onDialogClose);
+
+      if (dialog.open) {
+        dialog.close();
+      }
+
+      resolve(value);
+    }
+
+    function onSubmit(event) {
+      event.preventDefault();
+
+      const selected = form.querySelector(
+        'input[name="appointmentPaymentMethod"]:checked'
+      );
+
+      if (
+        !selected ||
+        !Object.hasOwn(
+          PAYMENT_METHOD_LABELS,
+          selected.value
+        )
+      ) {
+        error.textContent =
+          "Selecciona un método de pago.";
+
+        return;
+      }
+
+      finish(selected.value);
+    }
+
+    function onCancel() {
+      finish(null);
+    }
+
+    function onDialogCancel(event) {
+      event.preventDefault();
+      finish(null);
+    }
+
+    function onDialogClose() {
+      finish(null);
+    }
+
+    form.addEventListener("submit", onSubmit);
+    cancelButton.addEventListener("click", onCancel);
+    dialog.addEventListener("cancel", onDialogCancel);
+    dialog.addEventListener("close", onDialogClose);
+
+    try {
+      dialog.showModal();
+    } catch (error) {
+      console.error(
+        "No se pudo abrir la ventana de pago:",
+        error
+      );
+
+      finish(null);
+    }
+  });
+}
 
 /* =====================================================
    INICIALIZACIÓN
@@ -102,6 +487,7 @@ async function initialize() {
     await populateSelectors();
 
     initializeCustomerSelector();
+    initializePaymentDialog();
 
     initializeAppointmentCalendar(
       renderAppointments
@@ -264,8 +650,6 @@ function updateServiceOptions() {
 
 /* =====================================================
    SINCRONIZACIÓN DE SERVICIOS
-
-   Se conserva el MutationObserver original.
 ===================================================== */
 
 const serviceOptionsObserver = new MutationObserver(() => {
@@ -480,9 +864,6 @@ function configureEvents() {
 
 /* =====================================================
    RESERVA DESDE CLIENTES
-
-   Conserva id, nombre y teléfono.
-   Espera a que resetForm termine.
 ===================================================== */
 
 async function handleIncomingCustomerBooking() {
@@ -528,11 +909,6 @@ async function handleIncomingCustomerBooking() {
     return;
   }
 
-  /*
-   * Establecer el customerId directamente.
-   * No buscar únicamente por teléfono,
-   * porque puede estar vacío.
-   */
   nameInput.value = customer.name || "";
   phoneInput.value = customer.phone || "";
 
@@ -891,8 +1267,6 @@ function renderTimes() {
 
 /* =====================================================
    GUARDAR CITA Y CLIENTE
-
-   Primero cliente, después cita.
 ===================================================== */
 
 async function saveAppointment() {
@@ -1000,10 +1374,6 @@ async function saveAppointment() {
       );
     }
 
-    /*
-     * Resolver cliente antes de crear la cita.
-     * El servidor asigna o reutiliza customerId.
-     */
     const customer =
       await customerSelector.resolve();
 
@@ -1013,10 +1383,6 @@ async function saveAppointment() {
       );
     }
 
-    /*
-     * Validar nuevamente el horario después
-     * de resolver al cliente.
-     */
     if (
       !getAvailableTimes(
         date,
@@ -1122,10 +1488,6 @@ function renderAppointments() {
   const appointments =
     getFilteredAppointments();
 
-  /*
-   * Calendario y tabla reciben
-   * las mismas citas filtradas.
-   */
   renderAppointmentCalendar(
     appointments,
     firebaseBarbers
@@ -1154,6 +1516,17 @@ function renderAppointments() {
       const barber = getBarber(
         appointment.barberId
       );
+
+      const paymentLabel =
+        appointment.status === "completed" &&
+        Object.hasOwn(
+          PAYMENT_METHOD_LABELS,
+          appointment.paymentMethod
+        )
+          ? PAYMENT_METHOD_LABELS[
+              appointment.paymentMethod
+            ]
+          : "";
 
       return `
         <tr>
@@ -1213,6 +1586,16 @@ function renderAppointments() {
 
           <td>
             ${renderStatus(appointment.status)}
+
+            ${
+              paymentLabel
+                ? `
+                  <span class="appointment-payment-label">
+                    Pago: ${escapeHTML(paymentLabel)}
+                  </span>
+                `
+                : ""
+            }
           </td>
 
           <td>
@@ -1311,7 +1694,7 @@ function handleTableAction(event) {
     "[data-action]"
   );
 
-  if (!button) {
+  if (!button || updatingAppointmentStatus) {
     return;
   }
 
@@ -1322,12 +1705,15 @@ function handleTableAction(event) {
     return;
   }
 
+  updatingAppointmentStatus = true;
   button.disabled = true;
 
   updateStatus(
     appointmentId,
     newStatus
   ).finally(() => {
+    updatingAppointmentStatus = false;
+
     if (button.isConnected) {
       button.disabled = false;
     }
@@ -1359,7 +1745,7 @@ async function updateStatus(
     confirmed: "Cita confirmada.",
     cancelled: "Cita cancelada.",
     "no-show": "Cita marcada como no asistió.",
-    completed: "Cita completada."
+    completed: "Cita completada y pago registrado."
   };
 
   try {
@@ -1374,6 +1760,27 @@ async function updateStatus(
 
       await cancelAppointment(
         appointmentId
+      );
+
+    } else if (newStatus === "completed") {
+      /*
+       * Solicitar método de pago antes
+       * de completar la cita.
+       *
+       * Si se cancela la ventana,
+       * no se modifica el estado.
+       */
+      const paymentMethod =
+        await askPaymentMethod(appointment);
+
+      if (!paymentMethod) {
+        return;
+      }
+
+      await changeAppointmentStatus(
+        appointmentId,
+        "completed",
+        paymentMethod
       );
 
     } else {

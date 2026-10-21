@@ -33,6 +33,16 @@ export const origins = {
 
 /* =========================================================
    HORARIOS DISPONIBLES
+
+   Intervalos de 30 minutos.
+
+   Último inicio posible: 21:30 (9:30 p. m.)
+
+   La hora de cierre real depende del horario
+   configurado para cada barbero.
+
+   La duración del servicio y las citas ocupadas
+   se validan en el formulario y en el servidor.
 ========================================================= */
 
 export const availableTimes = [
@@ -55,7 +65,13 @@ export const availableTimes = [
     "17:00",
     "17:30",
     "18:00",
-    "18:30"
+    "18:30",
+    "19:00",
+    "19:30",
+    "20:00",
+    "20:30",
+    "21:00",
+    "21:30"
 ];
 
 /* =========================================================
