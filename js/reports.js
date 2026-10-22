@@ -17,14 +17,28 @@ import {
    EDUARDO'S BARBERSHOP
    REPORTES CON RANGO PERSONALIZADO DE FECHAS
 
+   Características:
    - Fecha de inicio y fecha de fin.
    - Fechas inclusivas.
    - Filtros aplicados a todos los reportes.
    - Datos obtenidos desde Firebase Firestore.
+   - Ingresos basados en el importe real cobrado.
+   - Compatibilidad con citas históricas.
+   - Importes con dos decimales.
    - Sin modificar la base de datos.
 ========================================================= */
 
 const TIME_ZONE = "America/Mazatlan";
+
+const MONEY_FORMATTER = new Intl.NumberFormat(
+    "es-MX",
+    {
+        style: "currency",
+        currency: "MXN",
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    }
+);
 
 let appointmentsData = [];
 let servicesData = [];
@@ -255,33 +269,34 @@ function initializeDateFilters() {
             "reportDateError"
         );
 
-       if (
-    startDateInput &&
-    endDateInput &&
-    dateErrorElement
-) {
-    const today = getToday();
+        if (
+            startDateInput &&
+            endDateInput &&
+            dateErrorElement
+        ) {
+            const today = getToday();
 
-    if (!startDateInput.value) {
-        startDateInput.value = getMonthStart(today);
-    }
+            if (!startDateInput.value) {
+                startDateInput.value =
+                    getMonthStart(today);
+            }
 
-    if (!endDateInput.value) {
-        endDateInput.value = today;
-    }
+            if (!endDateInput.value) {
+                endDateInput.value = today;
+            }
 
-    startDateInput.addEventListener(
-        "change",
-        renderReports
-    );
+            startDateInput.addEventListener(
+                "change",
+                renderReports
+            );
 
-    endDateInput.addEventListener(
-        "change",
-        renderReports
-    );
+            endDateInput.addEventListener(
+                "change",
+                renderReports
+            );
 
-    return;
-}
+            return;
+        }
 
         existingFilter.remove();
     }
@@ -347,6 +362,7 @@ function initializeDateFilters() {
     );
 
     dateErrorElement.id = "reportDateError";
+
     dateErrorElement.setAttribute(
         "role",
         "alert"
@@ -393,16 +409,19 @@ function initializeDateFilters() {
                 parent.remove();
             }
         }
+
     } else if (reportDateRange?.parentElement) {
         reportDateRange.insertAdjacentElement(
             "afterend",
             container
         );
+
     } else if (reportSummary?.parentElement) {
         reportSummary.parentElement.insertBefore(
             container,
             reportSummary
         );
+
     } else {
         document.body.prepend(container);
     }
@@ -574,8 +593,10 @@ function renderReports() {
     showDateError(range.message);
 
     if (!range.valid) {
-        reportDateRange.textContent =
-            "Selecciona un rango de fechas válido.";
+        if (reportDateRange) {
+            reportDateRange.textContent =
+                "Selecciona un rango de fechas válido.";
+        }
 
         showEmptyReports();
         return;
@@ -594,6 +615,10 @@ function renderReports() {
 }
 
 function renderPeriod(range) {
+    if (!reportDateRange) {
+        return;
+    }
+
     reportDateRange.textContent =
         `Del ${formatDate(range.start)} ` +
         `al ${formatDate(range.end)}`;
@@ -626,10 +651,92 @@ function showEmptyReports() {
 }
 
 /* =========================================================
+   INGRESOS POR CITA
+
+   Prioridad:
+   1. amountCharged registrado en Firebase.
+   2. Precio original del servicio para citas antiguas.
+
+   Se respeta amountCharged = 0.
+   Solo las citas completadas generan ingresos.
+========================================================= */
+
+function getAppointmentRevenue(appointment) {
+    if (
+        appointment.status !== "completed"
+    ) {
+        return 0;
+    }
+
+    const amountCharged =
+        appointment.amountCharged;
+
+    if (
+        typeof amountCharged === "number" &&
+        Number.isFinite(amountCharged) &&
+        amountCharged >= 0
+    ) {
+        return Math.round(
+            amountCharged * 100
+        ) / 100;
+    }
+
+    /*
+     * Compatibilidad con citas anteriores
+     * que todavía no tienen amountCharged.
+     */
+    const service = servicesData.find(
+        item =>
+            item.id === appointment.serviceId
+    );
+
+    const originalPrice = Number(
+        service?.price
+    );
+
+    if (
+        !Number.isFinite(originalPrice) ||
+        originalPrice < 0
+    ) {
+        return 0;
+    }
+
+    return Math.round(
+        originalPrice * 100
+    ) / 100;
+}
+
+/* =========================================================
+   CALCULAR INGRESOS REALES
+
+   Suma en centavos para evitar errores
+   de precisión con números decimales.
+========================================================= */
+
+function calculateRevenue(appointments) {
+    const totalInCents = appointments.reduce(
+        (total, appointment) => {
+            return total + Math.round(
+                getAppointmentRevenue(
+                    appointment
+                ) * 100
+            );
+        },
+        0
+    );
+
+    return totalInCents / 100;
+}
+
+/* =========================================================
    RESUMEN
 ========================================================= */
 
 function renderSummary(appointments) {
+    if (!reportSummary) {
+        return;
+    }
+
     const completed = appointments.filter(
         appointment =>
             appointment.status === "completed"
@@ -696,6 +803,10 @@ function renderSummary(appointments) {
 ========================================================= */
 
 function renderRevenue(appointments) {
+    if (!revenueReport) {
+        return;
+    }
+
     const completed = appointments.filter(
         appointment =>
             appointment.status === "completed"
@@ -730,6 +841,10 @@ function renderRevenue(appointments) {
 ========================================================= */
 
 function renderStatuses(appointments) {
+    if (!statusReport) {
+        return;
+    }
+
     const statuses = [
         ["completed", "Completadas"],
         ["confirmed", "Confirmadas"],
@@ -757,9 +872,16 @@ function renderStatuses(appointments) {
 
 /* =========================================================
    SERVICIOS
+
+   Cada servicio suma el importe real
+   de sus citas completadas.
 ========================================================= */
 
 function renderServices(appointments) {
+    if (!servicesReport) {
+        return;
+    }
+
     const completed = appointments.filter(
         appointment =>
             appointment.status === "completed"
@@ -767,16 +889,17 @@ function renderServices(appointments) {
 
     const data = servicesData
         .map(service => {
-            const count = completed.filter(
-                appointment =>
-                    appointment.serviceId === service.id
-            ).length;
+            const serviceAppointments =
+                completed.filter(
+                    appointment =>
+                        appointment.serviceId === service.id
+                );
 
             return {
                 ...service,
-                count,
+                count: serviceAppointments.length,
                 revenue:
-                    count * Number(service.price || 0)
+                    calculateRevenue(serviceAppointments)
             };
         })
         .filter(service => service.count > 0)
@@ -810,9 +933,16 @@ function renderServices(appointments) {
 
 /* =========================================================
    BARBEROS
+
+   Cada barbero suma el importe real
+   de las citas que completó.
 ========================================================= */
 
 function renderBarbers(appointments) {
+    if (!barbersReport) {
+        return;
+    }
+
     const completed = appointments.filter(
         appointment =>
             appointment.status === "completed"
@@ -875,6 +1005,10 @@ function renderBarbers(appointments) {
 ========================================================= */
 
 function renderOrigins(appointments) {
+    if (!originsReport) {
+        return;
+    }
+
     if (!appointments.length) {
         originsReport.innerHTML = emptyReport();
         return;
@@ -936,29 +1070,6 @@ function renderOrigins(appointments) {
 }
 
 /* =========================================================
-   CÁLCULO DE INGRESOS
-
-   Conserva el comportamiento original.
-========================================================= */
-
-function calculateRevenue(appointments) {
-    return appointments.reduce(
-        (total, appointment) => {
-            const service = servicesData.find(
-                item =>
-                    item.id === appointment.serviceId
-            );
-
-            return (
-                total +
-                Number(service?.price || 0)
-            );
-        },
-        0
-    );
-}
-
-/* =========================================================
    UTILIDADES
 ========================================================= */
 
@@ -1007,14 +1118,13 @@ function getInitials(name) {
 }
 
 function formatMoney(value) {
-    return new Intl.NumberFormat(
-        "es-MX",
-        {
-            style: "currency",
-            currency: "MXN",
-            maximumFractionDigits: 0
-        }
-    ).format(Number(value) || 0);
+    const amount = Number(value);
+
+    return MONEY_FORMATTER.format(
+        Number.isFinite(amount)
+            ? amount
+            : 0
+    );
 }
 
 function emptyReport() {

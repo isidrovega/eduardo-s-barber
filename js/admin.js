@@ -1,7 +1,6 @@
 
 import {
   origins,
-  availableTimes,
   getLocalDate
 } from "./data.js";
 
@@ -13,11 +12,6 @@ import {
 
 import { db } from "./firebase.js";
 import { protectPage } from "./auth.js";
-import { createAppointment } from "./appointment-booking.js";
-
-import {
-  createCustomerSelector
-} from "./customer-selector.js";
 
 import {
   collection,
@@ -25,10 +19,17 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
 
 /* =====================================================
-   ESTADO
-===================================================== */
+   EDUARDO'S BARBERSHOP
+   ADMIN.JS
 
-let selectedTime = "";
+   DASHBOARD ADMINISTRATIVO
+
+   - Estadísticas en tiempo real
+   - Próximas citas
+   - Clientes registrados
+   - Ingresos reales
+   - Acceso al formulario único de citas
+===================================================== */
 
 let firebaseAppointments = [];
 let firebaseBarbers = [];
@@ -36,33 +37,25 @@ let firebaseServices = [];
 let firebaseCustomerCount = 0;
 
 let appointmentsLoaded = false;
-let savingAppointment = false;
-let openingAppointmentModal = false;
-
 let unsubscribeAppointments = null;
 let toastTimer = null;
-let customerSelector = null;
 
-/* =====================================================
-   ELEMENTOS
-===================================================== */
-
-const modal = document.getElementById("appointmentModal");
-const phoneInput = document.getElementById("appointmentPhone");
-const nameInput = document.getElementById("appointmentName");
-const serviceSelect = document.getElementById("appointmentService");
-const barberSelect = document.getElementById("appointmentBarber");
-const dateInput = document.getElementById("appointmentDate");
-const originSelect = document.getElementById("appointmentOrigin");
-const statusSelect = document.getElementById("appointmentStatus");
-const notesInput = document.getElementById("appointmentNotes");
-const timeContainer = document.getElementById("appointmentTimes");
-const customerDetection = document.getElementById("customerDetection");
-
-const statsContainer = document.getElementById("dashboardStats");
+const statsContainer = document.getElementById(
+  "dashboardStats"
+);
 
 const appointmentsContainer = document.getElementById(
   "dashboardAppointments"
+);
+
+const MONEY_FORMATTER = new Intl.NumberFormat(
+  "es-MX",
+  {
+    style: "currency",
+    currency: "MXN",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }
 );
 
 /* =====================================================
@@ -70,25 +63,37 @@ const appointmentsContainer = document.getElementById(
 ===================================================== */
 
 async function initialize() {
-  statsContainer.textContent = "Cargando estadísticas...";
-  appointmentsContainer.textContent = "Cargando citas...";
+  if (!statsContainer || !appointmentsContainer) {
+    console.error(
+      "No se encontraron los contenedores del Dashboard."
+    );
+    return;
+  }
+
+  statsContainer.textContent =
+    "Cargando estadísticas...";
+
+  appointmentsContainer.textContent =
+    "Cargando citas...";
 
   try {
     const user = await protectPage("admin");
 
-    if (!user) return;
+    if (!user) {
+      return;
+    }
 
-    await populateSelectors();
-
-    initializeCustomerSelector();
     configureEvents();
+
+    await loadCatalog();
+
     startAppointmentsListener();
 
     await refreshCustomerCount();
 
   } catch (error) {
     console.error(
-      "Error al iniciar el administrador:",
+      "Error al iniciar el Dashboard:",
       error
     );
 
@@ -100,29 +105,51 @@ async function initialize() {
 
     showToast(
       error.message ||
-      "No se pudo iniciar el administrador."
+      "No se pudo iniciar el Dashboard."
     );
   }
 }
 
 /* =====================================================
-   SELECTOR DE CLIENTES
+   BOTONES DE NUEVA CITA
+
+   Ambos abren el mismo formulario de citas.html.
 ===================================================== */
 
-function initializeCustomerSelector() {
-  if (customerSelector) {
-    return;
+function configureEvents() {
+  const newAppointmentButton =
+    document.getElementById(
+      "newAppointmentButton"
+    );
+
+  const quickNewAppointment =
+    document.getElementById(
+      "quickNewAppointment"
+    );
+
+  if (newAppointmentButton) {
+    newAppointmentButton.addEventListener(
+      "click",
+      openNewAppointment
+    );
   }
 
-  customerSelector = createCustomerSelector({
-    nameInput,
-    phoneInput,
-    container: customerDetection
-  });
+  if (quickNewAppointment) {
+    quickNewAppointment.addEventListener(
+      "click",
+      openNewAppointment
+    );
+  }
+}
+
+function openNewAppointment() {
+  window.location.assign(
+    "citas.html?new=1"
+  );
 }
 
 /* =====================================================
-   FIRESTORE: BARBEROS Y SERVICIOS
+   CATÁLOGO
 ===================================================== */
 
 async function loadCatalog() {
@@ -140,102 +167,6 @@ async function loadCatalog() {
   );
 
   firebaseServices = [...services];
-
-  return {
-    barbers: firebaseBarbers,
-    services: firebaseServices
-  };
-}
-
-/* =====================================================
-   SELECTORES
-===================================================== */
-
-async function populateSelectors() {
-  await loadCatalog();
-
-  const previousBarberId = barberSelect.value;
-
-  const activeBarbers = firebaseBarbers.filter(
-    barber => barber.status === "active"
-  );
-
-  barberSelect.replaceChildren();
-
-  for (const barber of activeBarbers) {
-    barberSelect.add(
-      new Option(
-        barber.name || barber.id,
-        barber.id
-      )
-    );
-  }
-
-  if (!activeBarbers.length) {
-    barberSelect.add(
-      new Option("Sin barberos activos", "")
-    );
-  }
-
-  if (
-    activeBarbers.some(
-      barber => barber.id === previousBarberId
-    )
-  ) {
-    barberSelect.value = previousBarberId;
-  } else {
-    barberSelect.value = activeBarbers[0]?.id || "";
-  }
-
-  updateServiceOptions();
-}
-
-function updateServiceOptions() {
-  const barber = firebaseBarbers.find(
-    item => item.id === barberSelect.value
-  );
-
-  const previousServiceId = serviceSelect.value;
-
-  const assignedServiceIds = Array.isArray(barber?.serviceIds)
-    ? barber.serviceIds
-    : [];
-
-  const allowedServices = firebaseServices.filter(
-    service =>
-      service.status === "active" &&
-      assignedServiceIds.includes(service.id)
-  );
-
-  const options = allowedServices.map(
-    service =>
-      new Option(
-        `${service.name} · $${service.price} · ${service.duration} min`,
-        service.id
-      )
-  );
-
-  if (!options.length) {
-    options.push(
-      new Option("Sin servicios disponibles", "")
-    );
-  }
-
-  serviceSelect.replaceChildren(...options);
-
-  if (
-    allowedServices.some(
-      service => service.id === previousServiceId
-    )
-  ) {
-    serviceSelect.value = previousServiceId;
-  } else {
-    serviceSelect.value = allowedServices[0]?.id || "";
-  }
-
-  serviceSelect.disabled = allowedServices.length === 0;
-
-  return allowedServices;
 }
 
 /* =====================================================
@@ -248,7 +179,10 @@ function startAppointmentsListener() {
   }
 
   unsubscribeAppointments = onSnapshot(
-    collection(db, "appointments"),
+    collection(
+      db,
+      "appointments"
+    ),
 
     snapshot => {
       firebaseAppointments = snapshot.docs.map(
@@ -261,12 +195,11 @@ function startAppointmentsListener() {
       appointmentsLoaded = true;
 
       renderDashboard();
-      renderTimes();
     },
 
     error => {
       console.error(
-        "Error al escuchar citas:",
+        "Error al escuchar las citas:",
         error
       );
 
@@ -286,7 +219,7 @@ function startAppointmentsListener() {
 }
 
 /* =====================================================
-   FIRESTORE: CLIENTES
+   CLIENTES
 ===================================================== */
 
 async function refreshCustomerCount() {
@@ -312,52 +245,50 @@ async function refreshCustomerCount() {
 }
 
 /* =====================================================
-   EVENTOS
+   PRECIO DEL SERVICIO
 ===================================================== */
 
-function configureEvents() {
-  document.getElementById("newAppointmentButton")
-    .addEventListener("click", openModal);
+function getServicePrice(appointment) {
+  const service = getService(
+    appointment.serviceId
+  );
 
-  document.getElementById("quickNewAppointment")
-    .addEventListener("click", openModal);
+  const price = Number(service.price);
 
-  document.getElementById("closeModalButton")
-    .addEventListener("click", closeModal);
+  if (
+    !Number.isFinite(price) ||
+    price < 0
+  ) {
+    return 0;
+  }
 
-  document.getElementById("cancelModalButton")
-    .addEventListener("click", closeModal);
+  return price;
+}
 
-  document.getElementById("saveAppointmentButton")
-    .addEventListener("click", saveAppointment);
+/* =====================================================
+   INGRESO REAL
 
-  /*
-   * El selector administra las búsquedas
-   * por nombre y teléfono.
-   */
+   Si la cita tiene amountCharged,
+   se utiliza el importe realmente cobrado.
 
-  barberSelect.addEventListener("change", () => {
-    updateServiceOptions();
-    renderTimes();
-  });
+   Para citas antiguas sin ese campo,
+   se utiliza el precio del servicio.
+===================================================== */
 
-  serviceSelect.addEventListener("change", renderTimes);
-  dateInput.addEventListener("change", renderTimes);
+function getAppointmentRevenue(appointment) {
+  if (appointment.status !== "completed") {
+    return 0;
+  }
 
-  modal.addEventListener("click", event => {
-    if (event.target === modal) {
-      closeModal();
-    }
-  });
+  if (
+    typeof appointment.amountCharged === "number" &&
+    Number.isFinite(appointment.amountCharged) &&
+    appointment.amountCharged >= 0
+  ) {
+    return appointment.amountCharged;
+  }
 
-  document.addEventListener("keydown", event => {
-    if (
-      event.key === "Escape" &&
-      !modal.classList.contains("hidden")
-    ) {
-      closeModal();
-    }
-  });
+  return getServicePrice(appointment);
 }
 
 /* =====================================================
@@ -365,7 +296,9 @@ function configureEvents() {
 ===================================================== */
 
 function renderDashboard() {
-  if (!appointmentsLoaded) return;
+  if (!appointmentsLoaded) {
+    return;
+  }
 
   const today = getLocalDate();
 
@@ -376,29 +309,46 @@ function renderDashboard() {
   );
 
   const completed = firebaseAppointments.filter(
-    appointment => appointment.status === "completed"
+    appointment =>
+      appointment.status === "completed"
   );
 
   const revenue = completed.reduce(
-    (total, appointment) => {
-      const service = getService(appointment.serviceId);
-
-      return total + (
-        Number(service.price) || 0
-      );
-    },
+    (total, appointment) =>
+      total + getAppointmentRevenue(appointment),
     0
   );
 
   statsContainer.innerHTML = `
-    ${statCard("Citas de hoy", todayAppointments.length)}
-    ${statCard("Clientes", firebaseCustomerCount)}
-    ${statCard("Completadas", completed.length)}
-    ${statCard("Ingresos registrados", `$${revenue}`)}
+    ${statCard(
+      "Citas de hoy",
+      todayAppointments.length
+    )}
+
+    ${statCard(
+      "Clientes",
+      firebaseCustomerCount
+    )}
+
+    ${statCard(
+      "Completadas",
+      completed.length
+    )}
+
+    ${statCard(
+      "Ingresos registrados",
+      formatMoney(revenue)
+    )}
   `;
 
-  renderUpcomingAppointments(firebaseAppointments);
+  renderUpcomingAppointments(
+    firebaseAppointments
+  );
 }
+
+/* =====================================================
+   PRÓXIMAS CITAS
+===================================================== */
 
 function renderUpcomingAppointments(appointments) {
   const today = getLocalDate();
@@ -412,9 +362,10 @@ function renderUpcomingAppointments(appointments) {
       appointment.date >= today
     )
     .sort((a, b) =>
-      `${a.date} ${a.time}`.localeCompare(
-        `${b.date} ${b.time}`
-      )
+      `${a.date || ""} ${a.time || ""}`
+        .localeCompare(
+          `${b.date || ""} ${b.time || ""}`
+        )
     )
     .slice(0, 7);
 
@@ -428,487 +379,81 @@ function renderUpcomingAppointments(appointments) {
     return;
   }
 
-  appointmentsContainer.innerHTML = upcoming
-    .map(appointment => {
-      const service = getService(appointment.serviceId);
-      const barber = getBarber(appointment.barberId);
+  appointmentsContainer.innerHTML = upcoming.map(
+    appointment => {
+      const service = getService(
+        appointment.serviceId
+      );
+
+      const barber = getBarber(
+        appointment.barberId
+      );
+
+      const clientName =
+        appointment.clientName ||
+        "Público en general";
 
       return `
         <div class="dashboard-appointment">
+
           <div class="appointment-time">
-            ${formatTime(appointment.time)}
+            ${formatTime(
+              appointment.time
+            )}
           </div>
 
           <div class="appointment-client">
+
             <strong>
-              ${escapeHTML(appointment.clientName)}
+              ${escapeHTML(
+                clientName
+              )}
             </strong>
 
             <span>
-              ${escapeHTML(service.name)}
-              · ${formatDate(appointment.date)}
+              ${escapeHTML(
+                service.name
+              )}
+
+              · ${formatDate(
+                appointment.date
+              )}
+
               · ${escapeHTML(
-                origins[appointment.origin] || "Otro"
+                origins[
+                  appointment.origin
+                ] || "Otro"
               )}
             </span>
+
           </div>
 
           <div class="appointment-barber">
-            ${escapeHTML(barber.name)}
+            ${escapeHTML(
+              barber.name
+            )}
           </div>
 
           <div class="appointment-status">
-            ${renderStatus(appointment.status)}
+            ${renderStatus(
+              appointment.status
+            )}
           </div>
+
         </div>
       `;
-    })
-    .join("");
+    }
+  ).join("");
 }
 
 /* =====================================================
-   MODAL
-===================================================== */
-
-async function openModal() {
-  if (openingAppointmentModal) {
-    return;
-  }
-
-  if (!appointmentsLoaded) {
-    showToast("Espera a que carguen las citas.");
-    return;
-  }
-
-  openingAppointmentModal = true;
-
-  try {
-    await resetForm();
-
-    modal.classList.remove("hidden");
-
-    setTimeout(() => {
-      nameInput.focus();
-    }, 50);
-
-  } catch (error) {
-    console.error(
-      "Error al abrir nueva cita:",
-      error
-    );
-
-    showToast(
-      "No se pudo abrir el formulario de citas."
-    );
-
-  } finally {
-    openingAppointmentModal = false;
-  }
-}
-
-function closeModal() {
-  modal.classList.add("hidden");
-}
-
-async function resetForm() {
-  phoneInput.value = "";
-  nameInput.value = "";
-  notesInput.value = "";
-
-  customerSelector?.reset();
-
-  originSelect.value = "whatsapp";
-
-  statusSelect.value = "pending";
-  statusSelect.disabled = true;
-
-  dateInput.min = getLocalDate();
-  dateInput.value = getLocalDate();
-
-  selectedTime = "";
-
-  serviceSelect.replaceChildren(
-    new Option("Cargando servicios...", "")
-  );
-
-  serviceSelect.disabled = true;
-  barberSelect.disabled = true;
-
-  try {
-    await populateSelectors();
-
-  } catch (error) {
-    console.error(
-      "Error al actualizar el catálogo:",
-      error
-    );
-
-    serviceSelect.replaceChildren(
-      new Option("Error al cargar servicios", "")
-    );
-
-    serviceSelect.disabled = true;
-
-    throw error;
-
-  } finally {
-    barberSelect.disabled = false;
-  }
-
-  renderTimes();
-}
-
-/* =====================================================
-   DISPONIBILIDAD
-===================================================== */
-
-function toMinutes(value) {
-  if (!/^\d{2}:\d{2}$/.test(value || "")) {
-    return NaN;
-  }
-
-  const [hours, minutes] = value.split(":").map(Number);
-
-  if (
-    hours < 0 ||
-    hours > 23 ||
-    minutes < 0 ||
-    minutes > 59
-  ) {
-    return NaN;
-  }
-
-  return hours * 60 + minutes;
-}
-
-function getAvailableTimes(date, barberId) {
-  if (
-    !appointmentsLoaded ||
-    !date ||
-    !barberId ||
-    !serviceSelect.value
-  ) {
-    return [];
-  }
-
-  const barber = firebaseBarbers.find(
-    item => item.id === barberId
-  );
-
-  const service = firebaseServices.find(
-    item => item.id === serviceSelect.value
-  );
-
-  if (
-    !barber ||
-    barber.status !== "active" ||
-    !service ||
-    service.status !== "active" ||
-    !barber.serviceIds?.includes(service.id)
-  ) {
-    return [];
-  }
-
-  const duration = Number(service.duration);
-
-  if (
-    !Number.isFinite(duration) ||
-    duration <= 0
-  ) {
-    return [];
-  }
-
-  const weekday = [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday"
-  ][new Date(`${date}T12:00:00Z`).getUTCDay()];
-
-  const schedule = barber.schedule?.[weekday];
-
-  if (!schedule?.enabled) {
-    return [];
-  }
-
-  const opening = toMinutes(schedule.start);
-  const closing = toMinutes(schedule.end);
-
-  if (
-    !Number.isFinite(opening) ||
-    !Number.isFinite(closing)
-  ) {
-    return [];
-  }
-
-  const occupied = firebaseAppointments.filter(
-    appointment =>
-      appointment.date === date &&
-      appointment.barberId === barberId &&
-      appointment.status !== "cancelled" &&
-      appointment.status !== "no-show"
-  );
-
-  const businessTime = new Intl.DateTimeFormat(
-    "en-GB",
-    {
-      timeZone: "America/Mazatlan",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23"
-    }
-  ).format(new Date());
-
-  const currentMinutes = toMinutes(businessTime);
-
-  return availableTimes.filter(time => {
-    const start = toMinutes(time);
-    const end = start + duration;
-
-    if (
-      !Number.isFinite(start) ||
-      start < opening ||
-      end > closing
-    ) {
-      return false;
-    }
-
-    if (
-      date === getLocalDate() &&
-      start <= currentMinutes
-    ) {
-      return false;
-    }
-
-    return !occupied.some(appointment => {
-      const existingService = firebaseServices.find(
-        item => item.id === appointment.serviceId
-      );
-
-      const existingStart = toMinutes(appointment.time);
-
-      if (!Number.isFinite(existingStart)) {
-        return true;
-      }
-
-      const existingDuration =
-        Number(appointment.duration) ||
-        Number(existingService?.duration) ||
-        30;
-
-      const existingEnd =
-        existingStart + existingDuration;
-
-      return (
-        start < existingEnd &&
-        end > existingStart
-      );
-    });
-  });
-}
-
-function renderTimes() {
-  const times = getAvailableTimes(
-    dateInput.value,
-    barberSelect.value
-  );
-
-  if (!times.includes(selectedTime)) {
-    selectedTime = times[0] || "";
-  }
-
-  if (!times.length) {
-    timeContainer.innerHTML = `
-      <div class="empty" style="grid-column: 1 / -1;">
-        No hay horarios disponibles.
-      </div>
-    `;
-
-    return;
-  }
-
-  timeContainer.innerHTML = times
-    .map(time => `
-      <button
-        type="button"
-        class="time-button ${
-          selectedTime === time ? "selected" : ""
-        }"
-        data-time="${time}"
-      >
-        ${formatTime(time)}
-      </button>
-    `)
-    .join("");
-
-  timeContainer
-    .querySelectorAll(".time-button")
-    .forEach(button => {
-      button.addEventListener("click", () => {
-        selectedTime = button.dataset.time;
-        renderTimes();
-      });
-    });
-}
-
-/* =====================================================
-   GUARDAR CITA Y CLIENTE
-===================================================== */
-
-async function saveAppointment() {
-  if (savingAppointment) return;
-
-  if (!appointmentsLoaded) {
-    showToast("Espera a que carguen las citas.");
-    return;
-  }
-
-  const name = nameInput.value.trim();
-  const phone = phoneInput.value.trim();
-  const date = dateInput.value;
-
-  if (!name) {
-    showToast("Ingresa el nombre del cliente.");
-    nameInput.focus();
-    return;
-  }
-
-  const phoneDigits = phone.replace(/\D/g, "");
-
-  if (
-    phone &&
-    (
-      phoneDigits.length < 7 ||
-      phoneDigits.length > 15
-    )
-  ) {
-    showToast(
-      "El teléfono debe tener entre 7 y 15 dígitos, o dejarse vacío."
-    );
-
-    phoneInput.focus();
-    return;
-  }
-
-  const barber = firebaseBarbers.find(
-    item => item.id === barberSelect.value
-  );
-
-  const service = firebaseServices.find(
-    item => item.id === serviceSelect.value
-  );
-
-  if (
-    !barber ||
-    barber.status !== "active" ||
-    !service ||
-    service.status !== "active" ||
-    !barber.serviceIds?.includes(service.id)
-  ) {
-    showToast(
-      "Selecciona un barbero y un servicio disponibles."
-    );
-
-    return;
-  }
-
-  if (!date || !selectedTime) {
-    showToast(
-      "Selecciona servicio, barbero, fecha y hora."
-    );
-
-    return;
-  }
-
-  const currentAvailableTimes = getAvailableTimes(
-    date,
-    barber.id
-  );
-
-  if (!currentAvailableTimes.includes(selectedTime)) {
-    showToast(
-      "El horario seleccionado ya no está disponible."
-    );
-
-    renderTimes();
-    return;
-  }
-
-  const button = document.getElementById(
-    "saveAppointmentButton"
-  );
-
-  savingAppointment = true;
-  button.disabled = true;
-
-  try {
-    if (!customerSelector) {
-      throw new Error(
-        "No se pudo iniciar el selector de clientes."
-      );
-    }
-
-    /*
-     * Resolver el cliente ANTES de crear
-     * la cita. Esto garantiza customerId.
-     */
-    const customer = await customerSelector.resolve();
-
-    if (!customer?.id) {
-      throw new Error(
-        "No se pudo identificar al cliente."
-      );
-    }
-
-    const appointment = {
-      customerId: customer.id,
-      clientName: customer.name,
-      phone: customer.phone || "",
-      date,
-      time: selectedTime,
-      barberId: barber.id,
-      serviceId: service.id,
-      origin: originSelect.value,
-      notes: notesInput.value.trim()
-    };
-
-    await createAppointment(appointment);
-
-    closeModal();
-
-    await refreshCustomerCount();
-
-    showToast(
-      `Cita de ${customer.name} registrada correctamente.`
-    );
-
-  } catch (error) {
-    console.error(
-      "Error al guardar la cita:",
-      error
-    );
-
-    showToast(
-      error.message ||
-      "No se pudo registrar la cita."
-    );
-
-  } finally {
-    savingAppointment = false;
-    button.disabled = false;
-  }
-}
-
-/* =====================================================
-   UTILIDADES
+   SERVICIOS Y BARBEROS
 ===================================================== */
 
 function getService(id) {
   return firebaseServices.find(
-    service => service.id === id
+    service =>
+      service.id === id
   ) || {
     id,
     name: "Servicio no disponible",
@@ -919,21 +464,35 @@ function getService(id) {
 
 function getBarber(id) {
   return firebaseBarbers.find(
-    barber => barber.id === id
+    barber =>
+      barber.id === id
   ) || {
     id,
     name: "Barbero no disponible"
   };
 }
 
+/* =====================================================
+   TARJETAS DE ESTADÍSTICAS
+===================================================== */
+
 function statCard(label, value) {
   return `
     <article class="stat-card">
-      <span>${escapeHTML(label)}</span>
-      <strong>${escapeHTML(value)}</strong>
+      <span>
+        ${escapeHTML(label)}
+      </span>
+
+      <strong>
+        ${escapeHTML(value)}
+      </strong>
     </article>
   `;
 }
+
+/* =====================================================
+   ESTADOS
+===================================================== */
 
 function renderStatus(status) {
   const labels = {
@@ -944,7 +503,10 @@ function renderStatus(status) {
     "no-show": "No asistió"
   };
 
-  const safeStatus = Object.hasOwn(labels, status)
+  const safeStatus = Object.hasOwn(
+    labels,
+    status
+  )
     ? status
     : "pending";
 
@@ -955,10 +517,33 @@ function renderStatus(status) {
   `;
 }
 
-function formatTime(time) {
-  if (!time) return "";
+/* =====================================================
+   FORMATO DE DINERO
+===================================================== */
 
-  const [hours, minutes] = time.split(":").map(Number);
+function formatMoney(value) {
+  const amount = Number(value);
+
+  return MONEY_FORMATTER.format(
+    Number.isFinite(amount)
+      ? amount
+      : 0
+  );
+}
+
+/* =====================================================
+   FORMATO DE HORA
+===================================================== */
+
+function formatTime(time) {
+  if (!time) {
+    return "";
+  }
+
+  const [hours, minutes] =
+    String(time)
+      .split(":")
+      .map(Number);
 
   if (
     !Number.isFinite(hours) ||
@@ -967,7 +552,10 @@ function formatTime(time) {
     return "";
   }
 
-  const period = hours >= 12 ? "PM" : "AM";
+  const period =
+    hours >= 12
+      ? "PM"
+      : "AM";
 
   return (
     `${hours % 12 || 12}:` +
@@ -975,27 +563,56 @@ function formatTime(time) {
   );
 }
 
-function formatDate(dateString) {
-  if (!dateString) return "";
+/* =====================================================
+   FORMATO DE FECHA
+===================================================== */
 
-  return new Intl.DateTimeFormat("es-MX", {
-    day: "2-digit",
-    month: "short"
-  }).format(
-    new Date(`${dateString}T12:00:00`)
+function formatDate(dateString) {
+  if (!dateString) {
+    return "";
+  }
+
+  const date = new Date(
+    `${dateString}T12:00:00Z`
   );
+
+  if (!Number.isFinite(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(
+    "es-MX",
+    {
+      day: "2-digit",
+      month: "short",
+      timeZone: "UTC"
+    }
+  ).format(date);
 }
 
-function escapeHTML(value) {
-  const element = document.createElement("div");
+/* =====================================================
+   ESCAPAR HTML
+===================================================== */
 
-  element.textContent = String(value ?? "");
+function escapeHTML(value) {
+  const element = document.createElement(
+    "div"
+  );
+
+  element.textContent =
+    String(value ?? "");
 
   return element.innerHTML;
 }
 
+/* =====================================================
+   NOTIFICACIONES
+===================================================== */
+
 function showToast(message) {
-  const toast = document.getElementById("toast");
+  const toast = document.getElementById(
+    "toast"
+  );
 
   if (!toast) {
     console.warn(message);
@@ -1007,9 +624,14 @@ function showToast(message) {
 
   clearTimeout(toastTimer);
 
-  toastTimer = setTimeout(() => {
-    toast.classList.remove("show");
-  }, 2800);
+  toastTimer = setTimeout(
+    () => {
+      toast.classList.remove(
+        "show"
+      );
+    },
+    2800
+  );
 }
 
 /* =====================================================
